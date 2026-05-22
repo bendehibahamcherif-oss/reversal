@@ -7,9 +7,6 @@ const PORT = process.env.PORT || 10000;
 
 app.use(express.json({ limit: '500kb' }));
 
-console.log("HEADERS:", req.headers);
-console.log("QUERY:", req.query);
-console.log("PROVIDED TOKEN:", req.headers['x-user-token']);
 
 // ============ CORS ============
 const ALLOWED_ORIGINS_RAW = process.env.ALLOWED_ORIGINS || '*';
@@ -23,6 +20,10 @@ app.use(cors(corsOptions));
 // If USER_TOKEN env var is unset, auth is disabled (dev mode).
 const USER_TOKEN = process.env.USER_TOKEN || null;
 function requireAuth(req, res, next) {
+  console.log("HEADERS:", req.headers);
+  console.log("QUERY:", req.query);
+  console.log("PROVIDED TOKEN:",    req.headers['x-user-token']);
+
   if (!USER_TOKEN) return next();
   const provided = req.headers['x-user-token'] || req.query.token;
   if (provided !== USER_TOKEN) return res.status(401).json({ error: 'Invalid or missing user token' });
