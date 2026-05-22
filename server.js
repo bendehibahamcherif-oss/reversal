@@ -1,11 +1,22 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { requireAuth } from './auth.js';
+import http from 'http';
+import { Server } from 'socket.io';
 
 dotenv.config();
 
 const app = express();
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: process.env.ALLOWED_ORIGINS,
+    methods: ['GET', 'POST']
+  }
+});
+
 const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
