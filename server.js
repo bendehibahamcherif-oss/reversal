@@ -10,10 +10,14 @@ app.use(express.json({ limit: '500kb' }));
 
 // ============ CORS ============
 const ALLOWED_ORIGINS_RAW = process.env.ALLOWED_ORIGINS || '*';
-const corsOptions = ALLOWED_ORIGINS_RAW === '*'
-  ? { origin: '*' }
-  : { origin: ALLOWED_ORIGINS_RAW.split(',').map(s => s.trim()) };
-app.use(cors(corsOptions));
+
+app.use(cors({
+  origin: ALLOWED_ORIGINS_RAW === '*'
+    ? '*'
+    : ALLOWED_ORIGINS_RAW.split(',').map(s => s.trim()),
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-User-Token'],
+}));
 
 // ============ USER TOKEN AUTH ============
 // Simple shared-secret auth: client sends X-User-Token header.
