@@ -109,6 +109,7 @@ export const settingsDB = {
 // ---- Users ----
 const getUserByEmailStmt = db.prepare(`SELECT * FROM users WHERE email = ?`);
 const getUserByIdStmt = db.prepare(`SELECT id, email, role, created_at FROM users WHERE id = ?`);
+const listUsersStmt = db.prepare(`SELECT id, email, role, created_at FROM users ORDER BY created_at DESC LIMIT ?`);
 const createUserStmt = db.prepare(`INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)`);
 
 export const usersDB = {
@@ -121,6 +122,9 @@ export const usersDB = {
   },
   getById(id) {
     return getUserByIdStmt.get(id);
+  },
+  list(limit = 200) {
+    return listUsersStmt.all(limit);
   },
 };
 
