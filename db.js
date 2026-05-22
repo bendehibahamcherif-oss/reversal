@@ -2,7 +2,8 @@
 // Uses a single SQLite file on the Render persistent disk.
 // Tables:
 //   - alerts: history of alerts triggered
-//   - settings: key-value store for watchlists & user prefs (replicated across devices)
+//   - settings: key-value store for watchlists & user prefs
+//   - users: JWT login users
 
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
@@ -10,7 +11,6 @@ import { dirname } from 'path';
 
 const DB_PATH = process.env.DB_PATH || '/var/data/reversal.db';
 
-// Ensure dir exists (Render mounts persistent disk at /var/data by default)
 try {
   mkdirSync(dirname(DB_PATH), { recursive: true });
 } catch {}
@@ -45,6 +45,15 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin',
+    created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+  );
+  CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 `);
 
 // ---- Alerts API ----
@@ -79,7 +88,7 @@ export const alertsDB = {
   },
 };
 
-// ---- Settings (key-value JSON) ----
+// ---- Settings ----
 const getSettingStmt = db.prepare(`SELECT value FROM settings WHERE key = ?`);
 const setSettingStmt = db.prepare(`
   INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%s', 'now') * 1000)
@@ -97,7 +106,24 @@ export const settingsDB = {
   },
 };
 
-// Auto-prune alerts older than 30 days, hourly
+// ---- Users ----
+const getUserByEmailStmt = db.prepare(`SELECT * FROM users WHERE email = ?`);
+const getUserByIdStmt = db.prepare(`SELECT id, email, role, created_at FROM users WHERE id = ?`);
+const createUserStmt = db.prepare(`INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)`);
+
+export const usersDB = {
+  create({ email, passwordHash, role = 'admin' }) {
+    const result = createUserStmt.run(email.toLowerCase(), passwordHash, role);
+    return getUserByIdStmt.get(result.lastInsertRowid);
+  },
+  getByEmail(email) {
+    return getUserByEmailStmt.get(String(email).toLowerCase());
+  },
+  getById(id) {
+    return getUserByIdStmt.get(id);
+  },
+};
+
 setInterval(() => {
   try {
     const result = alertsDB.pruneOlderThan(30 * 24 * 60 * 60 * 1000);
