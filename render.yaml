@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: reversal-proxy
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CACHE_TTL_MS
+        value: 30000
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_RATE_LIMIT_PER_MIN
+        value: 10
