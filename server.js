@@ -7,6 +7,10 @@ const PORT = process.env.PORT || 10000;
 
 app.use(express.json({ limit: '500kb' }));
 
+console.log("HEADERS:", req.headers);
+console.log("QUERY:", req.query);
+console.log("PROVIDED TOKEN:", req.headers['x-user-token']);
+
 // ============ CORS ============
 const ALLOWED_ORIGINS_RAW = process.env.ALLOWED_ORIGINS || '*';
 const corsOptions = ALLOWED_ORIGINS_RAW === '*'
