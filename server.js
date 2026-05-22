@@ -1,11 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import { Server } from 'socket.io';
-import { alertsDB, settingsDB } from './db.js';
+import { alertsDB, settingsDB, usersDB } from './db.js';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const JWT_SECRET = process.env.JWT_SECRET || process.env.USER_TOKEN || 'dev-secret-change-me';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 
 app.use(express.json({ limit: '500kb' }));
 
@@ -18,19 +22,46 @@ const allowedOrigins = ALLOWED_ORIGINS_RAW === '*'
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-User-Token'],
+  allowedHeaders: ['Content-Type', 'X-User-Token', 'Authorization'],
 }));
 
 // ============ AUTH ============
 const USER_TOKEN = process.env.USER_TOKEN || null;
 
+function signUser(user) {
+  return jwt.sign({ sub: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+function getBearerToken(req) {
+  const auth = req.headers.authorization || '';
+  return auth.startsWith('Bearer ') ? auth.slice(7) : null;
+}
+
+function verifyJwt(token) {
+  try { return jwt.verify(token, JWT_SECRET); }
+  catch { return null; }
+}
+
 function requireAuth(req, res, next) {
+  const bearer = getBearerToken(req);
+  if (bearer) {
+    const payload = verifyJwt(bearer);
+    if (payload) { req.user = payload; return next(); }
+  }
+
+  // Backward-compatible shared token auth.
   if (!USER_TOKEN) return next();
   const provided = req.headers['x-user-token'] || req.query.token;
-  if (provided !== USER_TOKEN) {
-    return res.status(401).json({ error: 'Invalid or missing user token' });
-  }
-  next();
+  if (provided === USER_TOKEN) return next();
+
+  return res.status(401).json({ error: 'Invalid or missing user token' });
+}
+
+function getSocketToken(socket) {
+  const bearer = socket.handshake.auth?.jwt || socket.handshake.auth?.token;
+  const header = socket.handshake.headers.authorization || '';
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  return bearer || socket.handshake.headers['x-user-token'] || socket.handshake.query?.token;
 }
 
 // ============ HTTP + SOCKET.IO ============
@@ -39,15 +70,16 @@ const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
     methods: ['GET', 'POST'],
-    allowedHeaders: ['X-User-Token'],
+    allowedHeaders: ['X-User-Token', 'Authorization'],
   },
 });
 
 io.use((socket, next) => {
-  if (!USER_TOKEN) return next();
-  const token = socket.handshake.auth?.token || socket.handshake.headers['x-user-token'] || socket.handshake.query?.token;
-  if (token !== USER_TOKEN) return next(new Error('Invalid or missing user token'));
-  next();
+  const token = getSocketToken(socket);
+  if (!token && !USER_TOKEN) return next();
+  if (token && verifyJwt(token)) return next();
+  if (USER_TOKEN && token === USER_TOKEN) return next();
+  return next(new Error('Invalid or missing auth token'));
 });
 
 // ============ CACHE ============
@@ -77,11 +109,8 @@ function setCached(key, data) {
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  try { return await fetch(url, { ...options, signal: controller.signal }); }
+  finally { clearTimeout(timeout); }
 }
 
 // ============ HEALTH ============
@@ -89,31 +118,66 @@ app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     service: 'reversal-proxy',
-    version: '2.2-bloomberg-lite-foundation',
+    version: '3.0-institutional-terminal',
     authEnabled: !!USER_TOKEN,
+    jwtEnabled: true,
     cors: ALLOWED_ORIGINS_RAW,
     cacheSize: cache.size,
     cacheTTLms: CACHE_TTL,
     uptimeSeconds: Math.floor(process.uptime()),
-    publicEndpoints: [
-      'GET /health',
-      'GET /yahoo/chart/:symbol',
-      'GET /live/snapshot/:symbol',
-      'POST /signals/generate',
-    ],
-    protectedEndpoints: [
-      'GET /auth/check',
-      'POST /alerts',
-      'GET /alerts',
-      'DELETE /alerts',
-      'GET /settings/:key',
-      'PUT /settings/:key',
-    ],
+    publicEndpoints: ['GET /health', 'POST /auth/register', 'POST /auth/login', 'GET /yahoo/chart/:symbol', 'GET /live/snapshot/:symbol', 'POST /signals/generate', 'GET /intelligence/events'],
+    protectedEndpoints: ['GET /auth/me', 'GET /auth/check', 'POST /alerts', 'GET /alerts', 'DELETE /alerts', 'GET /settings/:key', 'PUT /settings/:key'],
     websocket: { eventIn: 'subscribe', eventOut: 'price_update' },
   });
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));
+
+// ============ JWT AUTH ENDPOINTS ============
+app.post('/auth/register', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email.includes('@') || password.length < 8) {
+      return res.status(400).json({ error: 'Email invalid or password too short' });
+    }
+    if (usersDB.getByEmail(email)) return res.status(409).json({ error: 'User already exists' });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = usersDB.create({ email, passwordHash, role: 'admin' });
+    const token = signUser(user);
+    res.json({ token, user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const row = usersDB.getByEmail(email);
+    if (!row) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const ok = await bcrypt.compare(password, row.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const user = { id: row.id, email: row.email, role: row.role, created_at: row.created_at };
+    const token = signUser(user);
+    res.json({ token, user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/auth/me', requireAuth, (req, res) => {
+  if (req.user?.sub) {
+    const user = usersDB.getById(req.user.sub);
+    return res.json({ user });
+  }
+  res.json({ user: { role: 'shared-token', email: null } });
+});
+
 app.get('/auth/check', requireAuth, (req, res) => res.json({ ok: true }));
 
 // ============ MARKET DATA ============
@@ -126,12 +190,7 @@ async function yahooFetch(symbol, interval = '5m', range = '1d', includePrePost 
   const cached = getCached(cacheKey);
   if (cached) return { data: cached, cached: true };
 
-  const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-    `?interval=${encodeURIComponent(interval)}` +
-    `&range=${encodeURIComponent(range)}` +
-    `&includePrePost=${includePrePost ? 'true' : 'false'}`;
-
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&includePrePost=${includePrePost ? 'true' : 'false'}`;
   const response = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
@@ -139,9 +198,7 @@ async function yahooFetch(symbol, interval = '5m', range = '1d', includePrePost 
       'Accept-Language': 'en-US,en;q=0.9',
     },
   });
-
   if (!response.ok) throw new Error(`Yahoo ${response.status}`);
-
   const data = await response.json();
   setCached(cacheKey, data);
   return { data, cached: false };
@@ -152,18 +209,10 @@ function extractBars(yahooData) {
   const timestamps = result?.timestamp || [];
   const quote = result?.indicators?.quote?.[0];
   if (!result || !quote || !timestamps.length) return { bars: [], meta: result?.meta || null };
-
   const bars = [];
   for (let i = 0; i < timestamps.length; i++) {
     if (quote.close?.[i] == null) continue;
-    bars.push({
-      t: timestamps[i] * 1000,
-      o: quote.open?.[i] ?? null,
-      h: quote.high?.[i] ?? null,
-      l: quote.low?.[i] ?? null,
-      c: quote.close?.[i] ?? null,
-      v: quote.volume?.[i] || 0,
-    });
+    bars.push({ t: timestamps[i] * 1000, o: quote.open?.[i] ?? null, h: quote.high?.[i] ?? null, l: quote.low?.[i] ?? null, c: quote.close?.[i] ?? null, v: quote.volume?.[i] || 0 });
   }
   return { bars, meta: result.meta };
 }
@@ -184,43 +233,30 @@ function simpleSignalFromBars(symbol, bars) {
   const window = closes.slice(-20);
   const avg = window.reduce((a, b) => a + b, 0) / Math.max(window.length, 1);
   const distancePct = avg ? ((last.c - avg) / avg) * 100 : 0;
-
   let signal = 'WAIT';
   let confidence = 0.45;
   let reason = 'Neutral intraday setup';
-
   if (distancePct > 0.6 && changePct < 0) {
-    signal = 'FADE_DOWN';
-    confidence = Math.min(0.85, 0.55 + Math.abs(distancePct) / 10);
-    reason = 'Price is extended above short-term average and starting to fade';
+    signal = 'FADE_DOWN'; confidence = Math.min(0.85, 0.55 + Math.abs(distancePct) / 10); reason = 'Price is extended above short-term average and starting to fade';
   } else if (distancePct < -0.6 && changePct > 0) {
-    signal = 'FADE_UP';
-    confidence = Math.min(0.85, 0.55 + Math.abs(distancePct) / 10);
-    reason = 'Price is extended below short-term average and starting to bounce';
+    signal = 'FADE_UP'; confidence = Math.min(0.85, 0.55 + Math.abs(distancePct) / 10); reason = 'Price is extended below short-term average and starting to bounce';
   }
-
   return { symbol, signal, confidence, reason, price: last.c, changePct, distancePct, timestamp: last.t };
 }
 
-// Public by design: frontend chart loader uses this route without X-User-Token.
 app.get('/yahoo/chart/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
     const interval = req.query.interval || '5m';
     const range = req.query.range || '1d';
     const includePrePost = req.query.includePrePost === 'true';
-
     if (!VALID_SYMBOL.test(symbol)) return res.status(400).json({ error: 'Invalid symbol' });
     if (!VALID_INTERVALS.test(interval)) return res.status(400).json({ error: 'Invalid interval' });
     if (!VALID_RANGES.test(range)) return res.status(400).json({ error: 'Invalid range' });
-
     const { data, cached } = await yahooFetch(symbol, interval, range, includePrePost);
     res.set('X-Cache', cached ? 'HIT' : 'MISS');
     res.json(data);
-  } catch (err) {
-    console.error('Yahoo error:', err.message);
-    res.status(502).json({ error: err.message });
-  }
+  } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 app.get('/live/snapshot/:symbol', async (req, res) => {
@@ -231,9 +267,7 @@ app.get('/live/snapshot/:symbol', async (req, res) => {
     const { bars, meta } = extractBars(data);
     const last = extractLastPrice(data);
     res.json({ symbol, last, signal: simpleSignalFromBars(symbol, bars), meta });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
+  } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
 app.post('/signals/generate', async (req, res) => {
@@ -243,34 +277,36 @@ app.post('/signals/generate', async (req, res) => {
     const { data } = await yahooFetch(symbol, '1m', '1d');
     const { bars } = extractBars(data);
     res.json(simpleSignalFromBars(symbol, bars));
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
+  } catch (err) { res.status(502).json({ error: err.message }); }
+});
+
+app.get('/intelligence/events', async (req, res) => {
+  res.json({
+    events: [
+      { type: 'Macro', title: 'FOMC / rates sensitivity watch', impact: 'High', status: 'Monitor USD yields and VIX' },
+      { type: 'Earnings', title: 'Large-cap tech earnings window', impact: 'Medium', status: 'Watch post-market gaps' },
+      { type: 'Liquidity', title: 'Month-end / options expiry flow', impact: 'Medium', status: 'Positioning can dominate signals' },
+    ],
+    sentiment: { label: 'Neutral / tactical', score: 0.52 },
+  });
 });
 
 // ============ WEBSOCKET LIVE FEED ============
 io.on('connection', (socket) => {
   console.log('⚡ WebSocket connected:', socket.id);
   socket.data.symbols = ['AAPL'];
-
   socket.on('subscribe', (payload) => {
     const symbols = Array.isArray(payload?.symbols) ? payload.symbols : [payload?.symbol || 'AAPL'];
-    const cleanSymbols = symbols
-      .map(s => String(s).toUpperCase().trim())
-      .filter(s => VALID_SYMBOL.test(s))
-      .slice(0, 20);
-
+    const cleanSymbols = symbols.map(s => String(s).toUpperCase().trim()).filter(s => VALID_SYMBOL.test(s)).slice(0, 20);
     socket.data.symbols = cleanSymbols.length ? cleanSymbols : ['AAPL'];
     socket.emit('subscribed', { symbols: socket.data.symbols });
   });
-
   socket.on('disconnect', () => console.log('❌ WebSocket disconnected:', socket.id));
 });
 
 setInterval(async () => {
   const sockets = await io.fetchSockets();
   if (!sockets.length) return;
-
   for (const socket of sockets) {
     const symbols = socket.data.symbols || ['AAPL'];
     for (const symbol of symbols) {
@@ -280,9 +316,7 @@ setInterval(async () => {
         const last = extractLastPrice(data);
         if (!last) continue;
         socket.emit('price_update', { symbol, price: last.price, timestamp: last.timestamp, signal: simpleSignalFromBars(symbol, bars) });
-      } catch (err) {
-        socket.emit('price_error', { symbol, error: err.message });
-      }
+      } catch (err) { socket.emit('price_error', { symbol, error: err.message }); }
     }
   }
 }, 5000);
@@ -294,27 +328,21 @@ app.post('/alerts', requireAuth, (req, res) => {
     if (!alert.symbol || !alert.decision) return res.status(400).json({ error: 'Missing fields' });
     alertsDB.insert(alert);
     res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/alerts', requireAuth, (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit || '200', 10), 1000);
     res.json({ alerts: alertsDB.list(limit) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/alerts', requireAuth, (req, res) => {
   try {
     const result = alertsDB.clear();
     res.json({ ok: true, deleted: result.changes });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ============ SETTINGS ============
@@ -326,9 +354,7 @@ app.get('/settings/:key', requireAuth, (req, res) => {
     if (!VALID_SETTING_KEY.test(key)) return res.status(400).json({ error: 'Invalid key' });
     const value = settingsDB.get(key);
     res.json({ key, value });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/settings/:key', requireAuth, (req, res) => {
@@ -337,14 +363,12 @@ app.put('/settings/:key', requireAuth, (req, res) => {
     if (!VALID_SETTING_KEY.test(key)) return res.status(400).json({ error: 'Invalid key' });
     settingsDB.set(key, req.body?.value);
     res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ============ START ============
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Reversal API + WebSocket running on port ${PORT}`);
-  console.log(`🔐 Auth: ${USER_TOKEN ? 'ENABLED' : 'DISABLED'}`);
+  console.log(`🔐 Auth: ${USER_TOKEN ? 'ENABLED' : 'DISABLED'} / JWT ENABLED`);
   console.log(`🌍 CORS: ${ALLOWED_ORIGINS_RAW}`);
 });
