@@ -404,9 +404,10 @@ app.post(
         user,
       });
     } catch (err) {
+      console.error('REGISTER ERROR:', err);
+
       res.status(500).json({
-        error:
-          'Registration failed',
+        error: err.message,
       });
     }
   }
@@ -467,9 +468,10 @@ app.post(
         },
       });
     } catch (err) {
+      console.error('LOGIN ERROR:', err);
+
       res.status(500).json({
-        error:
-          'Login failed',
+        error: err.message,
       });
     }
   }
