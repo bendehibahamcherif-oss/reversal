@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
+import { applyProductionIntegration } from './bootstrap/productionIntegration.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { Server } from 'socket.io';
@@ -12,7 +13,7 @@ const JWT_SECRET = process.env.JWT_SECRET || process.env.USER_TOKEN || 'dev-secr
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 
 app.use(express.json({ limit: '500kb' }));
-
+applyProductionIntegration(app);
 const ALLOWED_ORIGINS_RAW = process.env.ALLOWED_ORIGINS || '*';
 const allowedOrigins = ALLOWED_ORIGINS_RAW === '*'
   ? '*'
