@@ -15,8 +15,12 @@ const checks = [
   { method: 'POST', path: '/api/replay-session/pause' },
   { method: 'POST', path: '/api/replay-session/resume' },
   { method: 'POST', path: '/api/replay-session/stop' },
+  { method: 'GET', path: '/api/alpha/signals/SPY' },
+  { method: 'POST', path: '/api/alpha/analyze/SPY' },
   { method: 'GET', path: '/api/patterns/signals/SPY' },
   { method: 'POST', path: '/api/patterns/analyze/SPY' },
+  { method: 'GET', path: '/api/strategies/candidates/SPY' },
+  { method: 'POST', path: '/api/strategies/generate/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
