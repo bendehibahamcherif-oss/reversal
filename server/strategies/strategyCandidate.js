@@ -9,6 +9,8 @@ export function createStrategyCandidate(input = {}) {
     symbol: String(input.symbol || '').toUpperCase(),
     name: String(input.name || 'Unnamed Strategy'),
     type: String(input.type || 'signal-alignment'),
+    status: String(input.status || 'generated'),
+    warning: input.warning ? String(input.warning) : '',
     direction: ['long', 'short', 'neutral'].includes(input.direction) ? input.direction : 'neutral',
     confidence: Math.max(0, Math.min(0.99, Number(input.confidence) || 0)),
     timeframe: String(input.timeframe || '1m'),

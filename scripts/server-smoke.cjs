@@ -46,6 +46,31 @@ async function waitForReady(timeoutMs = 12000) {
 }
 
 async function run() {
+  const { strategyEngine } = await import('../server/strategies/strategyEngine.js');
+
+  const provisionalCandidates = strategyEngine.generateFromSignals(
+    'SMOKE',
+    [{ direction: 'bullish', confidence: 0.65, strength: 0.62, reason: 'Momentum breakout alpha' }],
+    [],
+    '1m',
+  );
+  if (!Array.isArray(provisionalCandidates) || provisionalCandidates.length === 0) {
+    throw new Error('Expected provisional candidate for strong alpha-only signal');
+  }
+  if (provisionalCandidates[0].type !== 'provisional' || provisionalCandidates[0].status !== 'needs_confirmation') {
+    throw new Error('Provisional candidate missing type/status markers');
+  }
+
+  const weakCandidates = strategyEngine.generateFromSignals(
+    'SMOKE',
+    [{ direction: 'bullish', confidence: 0.2, strength: 0.25, reason: 'Weak alpha' }],
+    [],
+    '1m',
+  );
+  if (weakCandidates.length !== 0) {
+    throw new Error('Weak alpha-only signals should not produce strategy candidates');
+  }
+
   const server = spawn(process.execPath, ['server/index.cjs'], {
     env: { ...process.env, PORT: String(PORT), MONGO_URI: process.env.MONGO_URI || '' },
     stdio: ['ignore', 'pipe', 'pipe'],
