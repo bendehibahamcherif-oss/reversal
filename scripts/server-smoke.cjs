@@ -33,6 +33,9 @@ const checks = [
   { method: 'GET', path: '/api/backtest/results/SPY' },
   { method: 'POST', path: '/api/validation/strategy/SPY' },
   { method: 'GET', path: '/api/validation/results/SPY' },
+  { method: 'GET', path: '/api/strategy-lab/strategies/SPY' },
+  { method: 'POST', path: '/api/strategy-lab/save/SPY', body: { name: 'Smoke Strategy', logic: 'Rule-based entry only for smoke test', notes: 'safe mock strategy', tags: ['smoke','manual'], status: 'draft', risk: { level: 'low' } } },
+  { method: 'GET', path: '/api/strategy-lab/strategies/SPY', assertSaved: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -102,6 +105,7 @@ async function run() {
       const response = await fetch(`${BASE_URL}${check.path}`, {
         method: check.method,
         headers: { 'Content-Type': 'application/json' },
+        body: check.body ? JSON.stringify(check.body) : undefined,
       });
 
       const text = await response.text();
@@ -118,6 +122,12 @@ async function run() {
 
       if (check.path === '/api/quant/pipeline/SPY' && !Array.isArray(parsed.qualityScores)) {
         throw new Error('POST /api/quant/pipeline/SPY missing qualityScores array');
+      }
+
+      if (check.assertSaved) {
+        if (!Array.isArray(parsed.strategies) || !parsed.strategies.some((s) => s.name === 'Smoke Strategy')) {
+          throw new Error('Expected saved strategy to be returned by strategy-lab list endpoint');
+        }
       }
 
       console.log(`OK ${check.method} ${check.path}`);
