@@ -9,6 +9,7 @@ import qualityRoutes from '../api/qualityRoutes.js';
 import analyticsRoutes from '../api/analyticsRoutes.js';
 import backtestRoutes from '../api/backtestRoutes.js';
 import validationRoutes from '../api/validationRoutes.js';
+import strategyLabRoutes from '../api/strategyLabRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -42,4 +43,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/backtest', backtestRoutes);
   app.use('/api/validation', validationRoutes);
+  app.use('/api/strategy-lab', strategyLabRoutes);
 }
