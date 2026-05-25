@@ -15,6 +15,8 @@ const checks = [
   { method: 'POST', path: '/api/replay-session/pause' },
   { method: 'POST', path: '/api/replay-session/resume' },
   { method: 'POST', path: '/api/replay-session/stop' },
+  { method: 'GET', path: '/api/patterns/signals/SPY' },
+  { method: 'POST', path: '/api/patterns/analyze/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
