@@ -4,18 +4,44 @@ import { strategyLabStore } from '../strategyLab/strategyLabStore.js';
 
 const strategyLabRoutes = Router();
 
-strategyLabRoutes.post('/save/:symbol/:candidateId', async (req, res) => {
-  const symbol = String(req.params.symbol || '').toUpperCase();
-  const candidateId = String(req.params.candidateId || '');
-  const strategy = await strategyLabEngine.saveFromCandidate(symbol, candidateId);
-  if (!strategy) return res.status(404).json({ ok: false, error: 'Strategy candidate not found' });
-  return res.json({ ok: true, symbol, strategy });
-});
+function buildManualStrategyPayload(req, symbolFromPath) {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const normalizedSymbol = String(symbolFromPath || body.symbol || '').toUpperCase();
 
-strategyLabRoutes.post('/save', async (req, res) => {
-  const strategy = await strategyLabEngine.saveManualStrategy(req.body || {});
-  return res.json({ ok: true, strategy });
-});
+  return {
+    symbol: normalizedSymbol,
+    name: body.name,
+    type: body.type,
+    direction: body.direction,
+    timeframe: body.timeframe,
+    entryLogic: body.entryLogic,
+    exitLogic: body.exitLogic,
+    riskRules: body.riskRules,
+    notes: body.notes,
+    tags: body.tags,
+    candidateId: body.candidateId,
+  };
+}
+
+async function saveStrategyHandler(req, res) {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  const candidateId = String(req.params.candidateId || req.body?.candidateId || '');
+
+  if (candidateId) {
+    const strategy = await strategyLabEngine.saveFromCandidate(symbol, candidateId);
+    if (!strategy) return res.status(404).json({ success: false, error: 'Strategy candidate not found' });
+    return res.json({ success: true, symbol, strategy });
+  }
+
+  const strategy = await strategyLabEngine.saveManualStrategy(buildManualStrategyPayload(req, symbol));
+  return res.json({ success: true, symbol, strategy });
+}
+
+strategyLabRoutes.options('/save/:symbol', (req, res) => res.sendStatus(204));
+strategyLabRoutes.options('/strategies/:symbol', (req, res) => res.sendStatus(204));
+strategyLabRoutes.post('/save/:symbol/:candidateId', saveStrategyHandler);
+strategyLabRoutes.post('/save/:symbol', saveStrategyHandler);
+strategyLabRoutes.post('/strategies/:symbol', saveStrategyHandler);
 
 strategyLabRoutes.get('/strategies/:symbol', async (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
