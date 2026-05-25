@@ -15,6 +15,8 @@ import { connectDatabase } from './database/db.js';
 
 import { applyProductionIntegration }
   from './bootstrap/productionIntegration.js';
+import { applyRuntimeIntegration }
+  from './server/bootstrap/runtimeIntegration.js';
 
 const app = express();
 
@@ -31,6 +33,7 @@ const JWT_EXPIRES_IN =
 app.use(express.json({ limit: '500kb' }));
 
 applyProductionIntegration(app);
+applyRuntimeIntegration(app);
 
 const ALLOWED_ORIGINS_RAW =
   process.env.ALLOWED_ORIGINS || '*';
