@@ -31,6 +31,8 @@ const checks = [
   { method: 'GET', path: '/api/analytics/latest/SPY' },
   { method: 'POST', path: '/api/backtest/run/SPY' },
   { method: 'GET', path: '/api/backtest/results/SPY' },
+  { method: 'POST', path: '/api/validation/strategy/SPY' },
+  { method: 'GET', path: '/api/validation/results/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {

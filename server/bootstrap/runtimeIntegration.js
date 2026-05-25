@@ -8,6 +8,7 @@ import quantRoutes from '../api/quantRoutes.js';
 import qualityRoutes from '../api/qualityRoutes.js';
 import analyticsRoutes from '../api/analyticsRoutes.js';
 import backtestRoutes from '../api/backtestRoutes.js';
+import validationRoutes from '../api/validationRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -40,4 +41,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/quality', qualityRoutes);
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/backtest', backtestRoutes);
+  app.use('/api/validation', validationRoutes);
 }
