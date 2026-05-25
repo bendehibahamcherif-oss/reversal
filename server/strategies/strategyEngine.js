@@ -162,6 +162,62 @@ class StrategyEngine {
       if (provisionalBearish) strategies.push(provisionalBearish);
     }
 
+    const findFeature = (key) => safePatterns.find((p) => p?.feature === key || p?.name === key || p?.type === key);
+    const alphaCount = Number(findFeature('alpha_count')?.value);
+    const patternCount = Number(findFeature('pattern_count')?.value);
+    const signalConflictScoreRaw = findFeature('signal_conflict_score')?.value;
+    const signalConflictScore = signalConflictScoreRaw === undefined ? null : Number(signalConflictScoreRaw);
+
+    const hasQuantContext = Number.isFinite(alphaCount) && alphaCount > 0
+      || Number.isFinite(patternCount) && patternCount > 0
+      || signalConflictScoreRaw !== undefined;
+
+    const hasAnyAlpha = safeAlpha.length > 0;
+
+    if (!strategies.length && (hasQuantContext || hasAnyAlpha)) {
+      const directionScore = safeAlpha.reduce((acc, signal) => {
+        const weight = Math.max(Number(signal?.confidence) || 0, Number(signal?.strength) || 0, 0.05);
+        if (signal?.direction === 'bullish') return acc + weight;
+        if (signal?.direction === 'bearish') return acc - weight;
+        return acc;
+      }, 0);
+
+      const direction = directionScore > 0.1 ? 'long' : directionScore < -0.1 ? 'short' : 'neutral';
+      const contextBits = [
+        Number.isFinite(alphaCount) ? `alpha_count=${alphaCount}` : null,
+        Number.isFinite(patternCount) ? `pattern_count=${patternCount}` : null,
+        signalConflictScoreRaw !== undefined ? `signal_conflict_score=${Number.isFinite(signalConflictScore) ? signalConflictScore : 'n/a'}` : null,
+        `alpha_signals=${safeAlpha.length}`,
+      ].filter(Boolean);
+
+      const directionalText = direction === 'neutral'
+        ? 'Enter only after confirmation signal; research candidate only.'
+        : `Direction inferred from dominant alpha bias (${direction}); wait for confirmation trigger before live consideration.`;
+
+      strategies.push(createStrategyCandidate({
+        symbol: normalized,
+        name: 'Research Test Candidate',
+        type: 'test_candidate',
+        status: 'research_only',
+        warning: 'Generated for backtest research; not validated.',
+        direction,
+        confidence: 0.25,
+        timeframe,
+        entryLogic: `Research context: ${contextBits.join(', ')}. ${directionalText}`,
+        exitLogic: 'Exit on stop loss breach, invalidation, or conservative take-profit targets.',
+        riskRules: {
+          maxRiskPerTrade: 0.003,
+          stopLossLogic: direction === 'short'
+            ? 'Use a protective stop above the recent swing high or 0.8 ATR above entry.'
+            : 'Use a protective stop below the recent swing low or 0.8 ATR below entry.',
+          takeProfitLogic: 'Take partial profits at 1R and fully exit by 1.25R unless stronger confirmation appears.',
+          invalidationCondition: 'Invalidate if alpha/pattern context degrades or if opposite directional evidence becomes dominant.',
+        },
+        supportingSignals: [...safeAlpha, ...safePatterns],
+        warnings: ['Generated for backtest research; not validated.'],
+      }));
+    }
+
     if (!strategies.length) return [];
 
     return strategies;

@@ -65,6 +65,9 @@ class BacktestEngine {
 
     const trades = this.simulateTrades(candles, candidate);
     const resultWarnings = Array.isArray(candidate?.warnings) ? [...candidate.warnings] : [];
+    if (candidate?.type === 'test_candidate' || candidate?.status === 'research_only') {
+      resultWarnings.push('Backtest run uses research-only candidate and is not a validation of live profitability.');
+    }
     const result = createBacktestResult({
       symbol: normalized,
       strategyId: candidate?.id || '',

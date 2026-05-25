@@ -67,8 +67,23 @@ async function run() {
     [],
     '1m',
   );
-  if (weakCandidates.length !== 0) {
-    throw new Error('Weak alpha-only signals should not produce strategy candidates');
+  if (weakCandidates.length === 0 || weakCandidates[0].type !== 'test_candidate' || weakCandidates[0].status !== 'research_only') {
+    throw new Error('Weak alpha-only context should produce a research test candidate');
+  }
+
+  const quantContextOnlyCandidates = strategyEngine.generateFromSignals(
+    'SMOKE',
+    [],
+    [{ feature: 'alpha_count', value: 1 }],
+    '1m',
+  );
+  if (quantContextOnlyCandidates.length === 0 || quantContextOnlyCandidates[0].type !== 'test_candidate') {
+    throw new Error('Quant context without alignment should produce a research test candidate');
+  }
+
+  const emptyCandidates = strategyEngine.generateFromSignals('SMOKE', [], [], '1m');
+  if (emptyCandidates.length !== 0) {
+    throw new Error('Empty inputs must not produce strategy candidates');
   }
 
   const server = spawn(process.execPath, ['server/index.cjs'], {
