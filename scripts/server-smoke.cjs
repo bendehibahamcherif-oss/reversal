@@ -23,6 +23,7 @@ const checks = [
   { method: 'POST', path: '/api/strategies/generate/SPY' },
   { method: 'GET', path: '/api/quant/features/SPY' },
   { method: 'POST', path: '/api/quant/extract/SPY' },
+  { method: 'GET', path: '/api/quant/pipeline/SPY' },
   { method: 'POST', path: '/api/quant/pipeline/SPY' },
 ];
 

@@ -32,14 +32,16 @@ quantRoutes.post('/extract/:symbol', (req, res) => {
   });
 });
 
-
-quantRoutes.post('/pipeline/:symbol', (req, res) => {
+const handlePipelineAnalysis = (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
   const timeframe = req.body?.timeframe || req.query?.timeframe || '1m';
   const result = quantPipelineEngine.runFullAnalysis(symbol, timeframe);
 
   return res.json(result);
-});
+};
+
+quantRoutes.get('/pipeline/:symbol', handlePipelineAnalysis);
+quantRoutes.post('/pipeline/:symbol', handlePipelineAnalysis);
 
 quantRoutes.delete('/features/:symbol', (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
