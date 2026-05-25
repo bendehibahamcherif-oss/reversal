@@ -4,7 +4,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "server:smoke": "node scripts/server-smoke.cjs",
+    "check:server": "node --check server/index.cjs"
   },
   "engines": {
     "node": "20.x"
