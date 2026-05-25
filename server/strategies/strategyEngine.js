@@ -29,10 +29,6 @@ class StrategyEngine {
     const hasBullishAlignment = bullishAlpha.length > 0 && bullishPatterns.length > 0;
     const hasBearishAlignment = bearishAlpha.length > 0 && bearishPatterns.length > 0;
 
-    if (!hasBullishAlignment && !hasBearishAlignment) {
-      return [];
-    }
-
     const conflictingSignals = (bullishAlpha.length > 0 && bearishPatterns.length > 0)
       || (bearishAlpha.length > 0 && bullishPatterns.length > 0)
       || (hasBullishAlignment && hasBearishAlignment);
@@ -69,6 +65,7 @@ class StrategyEngine {
         symbol: normalized,
         name: 'Bullish Alpha-Pattern Alignment',
         type: 'alignment',
+        status: 'validated',
         direction: 'long',
         confidence,
         timeframe,
@@ -93,6 +90,7 @@ class StrategyEngine {
         symbol: normalized,
         name: 'Bearish Alpha-Pattern Alignment',
         type: 'alignment',
+        status: 'validated',
         direction: 'short',
         confidence,
         timeframe,
@@ -103,6 +101,68 @@ class StrategyEngine {
         warnings,
       }));
     }
+
+    const isStrongAlpha = (signal) => {
+      const confidence = Number(signal?.confidence) || 0;
+      const strength = Number(signal?.strength) || 0;
+      return confidence >= 0.6 || strength >= 0.6;
+    };
+
+    const avgStrengthConfidence = (signals) => {
+      if (!signals.length) return 0;
+      const total = signals.reduce((acc, s) => {
+        const confidence = Number(s?.confidence) || 0;
+        const strength = Number(s?.strength) || 0;
+        return acc + Math.max(confidence, strength);
+      }, 0);
+      return total / signals.length;
+    };
+
+    const buildProvisionalCandidate = (direction, alphaGroup) => {
+      const strongAlpha = alphaGroup.filter(isStrongAlpha);
+      if (!strongAlpha.length) return null;
+
+      const baseConfidence = avgStrengthConfidence(strongAlpha);
+      const confidence = Math.max(0.3, Math.min(0.85, baseConfidence * 0.7));
+      const dominant = strongAlpha[0] || {};
+      const alphaReason = dominant.reason || dominant.signal || dominant.name || 'strong alpha signal';
+      const side = direction === 'long' ? 'bullish' : 'bearish';
+
+      return createStrategyCandidate({
+        symbol: normalized,
+        name: `${side[0].toUpperCase()}${side.slice(1)} Provisional Alpha Candidate`,
+        type: 'provisional',
+        status: 'needs_confirmation',
+        warning: 'Generated from alpha signal without pattern confirmation',
+        direction,
+        confidence,
+        timeframe,
+        entryLogic: `Provisional ${direction} entry based on alpha signal: ${alphaReason}. Await pattern confirmation before considering validation.`,
+        exitLogic: 'Exit on stop loss breach, invalidation, or take-profit targets.',
+        riskRules: {
+          maxRiskPerTrade: 0.005,
+          stopLossLogic: direction === 'long'
+            ? 'Use a protective stop 1 ATR below entry or below the recent swing low, whichever is tighter.'
+            : 'Use a protective stop 1 ATR above entry or above the recent swing high, whichever is tighter.',
+          takeProfitLogic: 'Scale out conservatively at 1R and fully exit by 1.5R unless pattern confirmation appears.',
+          invalidationCondition: `Invalidate if ${side} alpha weakens below threshold or opposite alpha dominates before confirmation.`,
+        },
+        supportingSignals: strongAlpha,
+        warnings: ['Generated from alpha signal without pattern confirmation'],
+      });
+    };
+
+    if (!hasBullishAlignment && bullishPatterns.length === 0) {
+      const provisionalBullish = buildProvisionalCandidate('long', bullishAlpha);
+      if (provisionalBullish) strategies.push(provisionalBullish);
+    }
+
+    if (!hasBearishAlignment && bearishPatterns.length === 0) {
+      const provisionalBearish = buildProvisionalCandidate('short', bearishAlpha);
+      if (provisionalBearish) strategies.push(provisionalBearish);
+    }
+
+    if (!strategies.length) return [];
 
     return strategies;
   }
