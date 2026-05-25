@@ -33,6 +33,7 @@ const checks = [
   { method: 'GET', path: '/api/backtest/results/SPY' },
   { method: 'POST', path: '/api/validation/strategy/SPY' },
   { method: 'GET', path: '/api/validation/results/SPY' },
+  { method: 'GET', path: '/api/strategy-lab/strategies/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
