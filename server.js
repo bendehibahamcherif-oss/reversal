@@ -30,11 +30,6 @@ const JWT_SECRET =
 const JWT_EXPIRES_IN =
   process.env.JWT_EXPIRES_IN || '12h';
 
-app.use(express.json({ limit: '500kb' }));
-
-applyProductionIntegration(app);
-applyRuntimeIntegration(app);
-
 const ALLOWED_ORIGINS_RAW =
   process.env.ALLOWED_ORIGINS || '*';
 
@@ -46,17 +41,23 @@ const allowedOrigins =
         .map((s) => s.trim())
         .filter(Boolean);
 
-app.use(
-  cors({
-    origin: allowedOrigins,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'X-User-Token',
-      'Authorization',
-    ],
-  })
-);
+const corsOptions = {
+  origin: allowedOrigins,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-User-Token',
+  ],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+app.use(express.json({ limit: '500kb' }));
+
+applyProductionIntegration(app);
+applyRuntimeIntegration(app);
 
 const USER_TOKEN = process.env.USER_TOKEN || null;
 
