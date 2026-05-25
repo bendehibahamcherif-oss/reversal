@@ -3,6 +3,7 @@ import replayLegacyRoutes from '../api/replaySessionRoutes.js';
 import replaySessionRoutes from '../api/replaySessionControlRoutes.js';
 import alphaRoutes from '../api/alphaRoutes.js';
 import patternRoutes from '../api/patternRoutes.js';
+import strategyRoutes from '../api/strategyRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -30,4 +31,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/replay-session', replaySessionRoutes);
   app.use('/api/alpha', alphaRoutes);
   app.use('/api/patterns', patternRoutes);
+  app.use('/api/strategies', strategyRoutes);
 }
