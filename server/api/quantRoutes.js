@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { quantFeatureEngine } from '../quant/quantFeatureEngine.js';
+import { quantPipelineEngine } from '../quant/quantPipelineEngine.js';
 
 const quantRoutes = Router();
 
@@ -29,6 +30,15 @@ quantRoutes.post('/extract/:symbol', (req, res) => {
     timeframe,
     features,
   });
+});
+
+
+quantRoutes.post('/pipeline/:symbol', (req, res) => {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  const timeframe = req.body?.timeframe || req.query?.timeframe || '1m';
+  const result = quantPipelineEngine.runFullAnalysis(symbol, timeframe);
+
+  return res.json(result);
 });
 
 quantRoutes.delete('/features/:symbol', (req, res) => {
