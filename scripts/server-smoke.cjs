@@ -33,6 +33,8 @@ const checks = [
   { method: 'GET', path: '/api/backtest/results/SPY' },
   { method: 'POST', path: '/api/validation/strategy/SPY' },
   { method: 'GET', path: '/api/validation/results/SPY' },
+  { method: 'POST', path: '/api/strategy-lab/save/SPY', body: { name: 'Smoke Manual Save', type: 'manual', direction: 'long', timeframe: '1h', entryLogic: 'Breakout above VWAP', exitLogic: 'Trailing stop below EMA', riskRules: { maxRiskPct: 1 }, notes: 'Smoke check manual save route', tags: ['smoke', 'manual'] } },
+  { method: 'POST', path: '/api/strategy-lab/strategies/SPY', body: { name: 'Smoke Alias Save', type: 'manual', direction: 'short', timeframe: '15m', entryLogic: 'Reversal at resistance', exitLogic: 'Take profit at support', riskRules: { maxRiskPct: 0.5 }, notes: 'Smoke check alias route', tags: ['smoke', 'alias'] } },
   { method: 'GET', path: '/api/strategy-lab/strategies/SPY' },
 ];
 
@@ -103,6 +105,7 @@ async function run() {
       const response = await fetch(`${BASE_URL}${check.path}`, {
         method: check.method,
         headers: { 'Content-Type': 'application/json' },
+        body: check.body ? JSON.stringify(check.body) : undefined,
       });
 
       const text = await response.text();
@@ -119,6 +122,13 @@ async function run() {
 
       if (check.path === '/api/quant/pipeline/SPY' && !Array.isArray(parsed.qualityScores)) {
         throw new Error('POST /api/quant/pipeline/SPY missing qualityScores array');
+      }
+
+      if (check.method === 'GET' && check.path === '/api/strategy-lab/strategies/SPY') {
+        const names = Array.isArray(parsed.strategies) ? parsed.strategies.map((item) => item?.name) : [];
+        if (!names.includes('Smoke Manual Save') || !names.includes('Smoke Alias Save')) {
+          throw new Error('GET /api/strategy-lab/strategies/SPY missing saved smoke strategies');
+        }
       }
 
       console.log(`OK ${check.method} ${check.path}`);
