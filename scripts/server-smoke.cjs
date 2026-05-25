@@ -22,6 +22,8 @@ const checks = [
   { method: 'GET', path: '/api/strategies/candidates/SPY' },
   { method: 'POST', path: '/api/strategies/generate/SPY' },
   { method: 'GET', path: '/api/quant/features/SPY' },
+  { method: 'GET', path: '/api/quality/scores/SPY' },
+  { method: 'POST', path: '/api/quality/score/SPY' },
   { method: 'POST', path: '/api/quant/extract/SPY' },
   { method: 'GET', path: '/api/quant/pipeline/SPY' },
   { method: 'POST', path: '/api/quant/pipeline/SPY' },
@@ -66,6 +68,10 @@ async function run() {
 
       if (!response.ok) {
         throw new Error(`${check.method} ${check.path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
+      }
+
+      if (check.path === '/api/quant/pipeline/SPY' && !Array.isArray(parsed.qualityScores)) {
+        throw new Error('POST /api/quant/pipeline/SPY missing qualityScores array');
       }
 
       console.log(`OK ${check.method} ${check.path}`);

@@ -2,6 +2,7 @@ import { alphaEngine } from '../alpha/alphaEngine.js';
 import { patternEngine } from '../patterns/patternEngine.js';
 import { strategyEngine } from '../strategies/strategyEngine.js';
 import { quantFeatureEngine } from './quantFeatureEngine.js';
+import { qualityEngine } from '../quality/qualityEngine.js';
 
 class QuantPipelineEngine {
   runFullAnalysis(symbol, timeframe = '1m') {
@@ -18,6 +19,8 @@ class QuantPipelineEngine {
         patternSignals: [],
         strategyCandidates: [],
         quantFeatures: [],
+        qualityScores: [],
+        rankedSignals: [],
         warnings,
       });
     }
@@ -42,6 +45,11 @@ class QuantPipelineEngine {
       warnings.push('No quant features extracted for current market state.');
     }
 
+    const qualityScores = this.safeArray(
+      qualityEngine.scoreSignals(normalized, alphaSignals, patternSignals, strategyCandidates, quantFeatures),
+    );
+    const rankedSignals = this.safeArray(qualityEngine.rankSignals(normalized));
+
     return this.buildResponse({
       symbol: normalized,
       timeframe: safeTimeframe,
@@ -49,6 +57,8 @@ class QuantPipelineEngine {
       patternSignals,
       strategyCandidates,
       quantFeatures,
+      qualityScores,
+      rankedSignals,
       warnings,
     });
   }
@@ -64,6 +74,8 @@ class QuantPipelineEngine {
     patternSignals,
     strategyCandidates,
     quantFeatures,
+    qualityScores,
+    rankedSignals,
     warnings,
   }) {
     return {
@@ -74,6 +86,8 @@ class QuantPipelineEngine {
       patternSignals,
       strategyCandidates,
       quantFeatures,
+      qualityScores: this.safeArray(qualityScores),
+      rankedSignals: this.safeArray(rankedSignals),
       warnings: this.safeArray(warnings),
       analyzedAt: new Date().toISOString(),
     };
