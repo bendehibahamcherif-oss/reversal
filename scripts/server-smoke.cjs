@@ -21,6 +21,8 @@ const checks = [
   { method: 'POST', path: '/api/patterns/analyze/SPY' },
   { method: 'GET', path: '/api/strategies/candidates/SPY' },
   { method: 'POST', path: '/api/strategies/generate/SPY' },
+  { method: 'GET', path: '/api/quant/features/SPY' },
+  { method: 'POST', path: '/api/quant/extract/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
