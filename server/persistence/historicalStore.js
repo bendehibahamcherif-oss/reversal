@@ -1,6 +1,52 @@
-export function getCandles(symbol = 'SPY') {
+const SUPPORTED_TIMEFRAMES = new Set(['1m', '5m', '15m', '1H']);
+
+function timeframeToMs(timeframe) {
+  switch (timeframe) {
+    case '1m':
+      return 60_000;
+    case '5m':
+      return 5 * 60_000;
+    case '15m':
+      return 15 * 60_000;
+    case '1H':
+      return 60 * 60_000;
+    default:
+      return null;
+  }
+}
+
+function alignTimestamp(timestampMs, timeframeMs) {
+  return Math.floor(timestampMs / timeframeMs) * timeframeMs;
+}
+
+function aggregateCandles(sourceCandles, targetTimeframe) {
+  const targetMs = timeframeToMs(targetTimeframe);
+  if (!targetMs) return [];
+
+  const buckets = new Map();
+  for (const candle of sourceCandles) {
+    const bucketTs = alignTimestamp(candle.t, targetMs);
+    const existing = buckets.get(bucketTs);
+    if (!existing) {
+      buckets.set(bucketTs, {
+        ...candle,
+        t: bucketTs,
+      });
+      continue;
+    }
+
+    existing.h = Math.max(existing.h, candle.h);
+    existing.l = Math.min(existing.l, candle.l);
+    existing.c = candle.c;
+    existing.v += candle.v;
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => a.t - b.t);
+}
+
+function getMockCandles(symbol = 'SPY') {
   const normalized = String(symbol || 'SPY').toUpperCase();
-  const now = Date.now();
+  const now = alignTimestamp(Date.now(), 60_000);
 
   return [
     {
@@ -31,4 +77,18 @@ export function getCandles(symbol = 'SPY') {
     ...candle,
     symbol: normalized,
   }));
+}
+
+export function getCandles(symbol = 'SPY', timeframe = '1m') {
+  const normalizedTimeframe = SUPPORTED_TIMEFRAMES.has(timeframe) ? timeframe : '1m';
+
+  // Base storage currently behaves like minute-level history.
+  const oneMinuteCandles = getMockCandles(symbol);
+
+  if (normalizedTimeframe === '1m') return oneMinuteCandles;
+  if (normalizedTimeframe === '5m') return aggregateCandles(oneMinuteCandles, '5m');
+  if (normalizedTimeframe === '15m') return aggregateCandles(oneMinuteCandles, '15m');
+  if (normalizedTimeframe === '1H') return aggregateCandles(oneMinuteCandles, '1H');
+
+  return [];
 }
