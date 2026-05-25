@@ -1,5 +1,6 @@
 import replayRoutes from '../api/replayRoutes.js';
 import replayLegacyRoutes from '../api/replaySessionRoutes.js';
+import replaySessionRoutes from '../api/replaySessionControlRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -7,6 +8,14 @@ export function applyRuntimeIntegration(app) {
       ok: true,
       runtime: 'active',
       service: 'reversal-proxy',
+      market: {
+        status: 'closed-or-idle-safe',
+        ticksRequiredForHealth: false,
+      },
+      feed: {
+        credentialsConfigured: Boolean(process.env.MARKET_FEED_KEY),
+        degradedMode: !process.env.MARKET_FEED_KEY,
+      },
     });
   };
 
@@ -16,4 +25,5 @@ export function applyRuntimeIntegration(app) {
 
   app.use('/api/replay', replayRoutes);
   app.use('/api/replay-legacy', replayLegacyRoutes);
+  app.use('/api/replay-session', replaySessionRoutes);
 }
