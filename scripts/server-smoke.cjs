@@ -27,6 +27,8 @@ const checks = [
   { method: 'POST', path: '/api/quant/extract/SPY' },
   { method: 'GET', path: '/api/quant/pipeline/SPY' },
   { method: 'POST', path: '/api/quant/pipeline/SPY' },
+  { method: 'GET', path: '/api/analytics/trend/SPY' },
+  { method: 'GET', path: '/api/analytics/latest/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {

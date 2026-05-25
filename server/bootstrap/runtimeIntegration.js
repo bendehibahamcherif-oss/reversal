@@ -6,6 +6,7 @@ import patternRoutes from '../api/patternRoutes.js';
 import strategyRoutes from '../api/strategyRoutes.js';
 import quantRoutes from '../api/quantRoutes.js';
 import qualityRoutes from '../api/qualityRoutes.js';
+import analyticsRoutes from '../api/analyticsRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -36,4 +37,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/strategies', strategyRoutes);
   app.use('/api/quant', quantRoutes);
   app.use('/api/quality', qualityRoutes);
+  app.use('/api/analytics', analyticsRoutes);
 }
