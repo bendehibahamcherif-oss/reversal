@@ -45,7 +45,8 @@ class BacktestEngine {
 
   runBacktestFromCandidate(symbol, candidate, timeframe = '1m') {
     const normalized = String(symbol || '').toUpperCase();
-    const candles = historicalStore.getCandles(normalized, timeframe);
+    const candleData = historicalStore.getCandlesWithMeta(normalized, timeframe);
+    const candles = candleData?.candles;
     const warnings = [];
 
     if (!Array.isArray(candles) || candles.length === 0) {
@@ -65,6 +66,9 @@ class BacktestEngine {
 
     const trades = this.simulateTrades(candles, candidate);
     const resultWarnings = Array.isArray(candidate?.warnings) ? [...candidate.warnings] : [];
+    if (candleData?.isFallbackDemo) {
+      resultWarnings.push('Backtest used fallback demo candles; not suitable for trading decisions.');
+    }
     if (candidate?.type === 'test_candidate' || candidate?.status === 'research_only') {
       resultWarnings.push('Backtest run uses research-only candidate and is not a validation of live profitability.');
     }

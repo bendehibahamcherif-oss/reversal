@@ -14,11 +14,11 @@ class QuantFeatureEngine {
     this.featuresBySymbol = new Map();
   }
 
-  extractForSymbol(symbol, timeframe = '1m', runtimeBook = null) {
+  extractForSymbol(symbol, timeframe = '1m', runtimeBook = null, candlesInput = null) {
     const normalized = String(symbol || '').toUpperCase();
     if (!normalized) return [];
 
-    const candles = getCandles(normalized, timeframe);
+    const candles = Array.isArray(candlesInput) ? candlesInput : getCandles(normalized, timeframe);
     const alphaSignals = alphaEngine.getSignals(normalized);
     const patternSignals = patternEngine.getPatterns(normalized);
     const strategies = strategyEngine.getStrategies(normalized);
