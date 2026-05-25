@@ -1,0 +1,45 @@
+import { Router } from 'express';
+import { quantFeatureEngine } from '../quant/quantFeatureEngine.js';
+
+const quantRoutes = Router();
+
+quantRoutes.get('/features/:symbol', (req, res) => {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+
+  return res.json({
+    ok: true,
+    symbol,
+    features: quantFeatureEngine.getFeatures(symbol),
+  });
+});
+
+quantRoutes.post('/extract/:symbol', (req, res) => {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  const timeframe = req.body?.timeframe || req.query?.timeframe || '1m';
+  const providedBook = req.body?.orderBook || null;
+  const runtimeBook = req.app?.locals?.orderBookEngine?.getBook?.(symbol)
+    || req.app?.locals?.orderBookEngine?.getSnapshot?.(symbol)
+    || null;
+
+  const features = quantFeatureEngine.extractForSymbol(symbol, timeframe, providedBook || runtimeBook);
+
+  return res.json({
+    ok: true,
+    symbol,
+    timeframe,
+    features,
+  });
+});
+
+quantRoutes.delete('/features/:symbol', (req, res) => {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  quantFeatureEngine.clearFeatures(symbol);
+
+  return res.json({
+    ok: true,
+    symbol,
+    features: [],
+  });
+});
+
+export default quantRoutes;
