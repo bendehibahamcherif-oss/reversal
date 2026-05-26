@@ -14,6 +14,7 @@ import ruleEngineRoutes from '../api/ruleEngineRoutes.js';
 import strategyTemplateRoutes from '../api/strategyTemplateRoutes.js';
 import sessionContextRoutes from '../api/sessionContextRoutes.js';
 import reversalRoutes from '../api/reversalRoutes.js';
+import paperTradingRoutes from '../api/paperTradingRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -52,4 +53,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/templates', strategyTemplateRoutes);
   app.use('/api/session-context', sessionContextRoutes);
   app.use('/api/reversals', reversalRoutes);
+  app.use('/api/paper', paperTradingRoutes);
 }
