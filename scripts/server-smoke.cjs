@@ -50,6 +50,12 @@ const checks = [
   { method: 'GET', path: '/api/paper/positions' },
   { method: 'POST', path: '/api/paper/reset' },
   { method: 'GET', path: '/api/feeds/status' },
+  { method: 'GET', path: '/api/feeds/providers' },
+  { method: 'POST', path: '/api/feeds/providers/active', body: { providers: ['fallback_demo', 'yahoo'], symbols: ['SPY', 'QQQ'] } },
+  { method: 'GET', path: '/api/feeds/providers/active' },
+  { method: 'POST', path: '/api/feeds/providers/polygon/credentials', body: { apiKey: 'fake_polygon_key_12345' } },
+  { method: 'GET', path: '/api/feeds/providers/polygon' },
+  { method: 'DELETE', path: '/api/feeds/providers/polygon/credentials' },
   { method: 'POST', path: '/api/feeds/demo/tick/SPY' },
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
@@ -175,6 +181,20 @@ async function run() {
         if (!createdRuleSetId) throw new Error('POST /api/rules/set/SPY missing created rule set id');
         checks.push({ method: 'POST', path: `/api/rules/evaluate/SPY/${createdRuleSetId}` });
         checks.push({ method: 'POST', path: `/api/rules/convert/SPY/${createdRuleSetId}` });
+      }
+
+      if (check.method === 'POST' && check.path === '/api/feeds/providers/polygon/credentials') {
+        const maskedFields = parsed?.credentials?.maskedFields || [];
+        if (!parsed?.credentials?.configured || !Array.isArray(maskedFields) || maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
+          throw new Error('Polygon credentials must be masked and never returned raw');
+        }
+      }
+
+      if (check.method === 'GET' && check.path === '/api/feeds/providers/polygon') {
+        const provider = parsed?.provider || {};
+        if (!provider.configured || !Array.isArray(provider.maskedFields) || provider.maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
+          throw new Error('GET provider should only return masked credential metadata');
+        }
       }
 
       if (check.method === 'GET' && check.path === '/api/strategy-lab/strategies/SPY') {
