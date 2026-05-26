@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 const ALLOWED_OPERATORS = new Set(['>', '>=', '<', '<=', '==', '!=', 'contains', 'exists']);
-const ALLOWED_SOURCES = new Set(['alpha', 'pattern', 'quantFeature', 'qualityScore', 'analytics', 'backtest', 'strategy']);
+const ALLOWED_SOURCES = new Set(['alpha', 'pattern', 'quantFeature', 'qualityScore', 'analytics', 'backtest', 'strategy', 'sessionContext']);
 
 export function createRuleCondition(input = {}) {
   const operator = String(input.operator || 'exists');
