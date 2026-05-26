@@ -49,6 +49,11 @@ const checks = [
   { method: 'GET', path: '/api/paper/orders/SPY' },
   { method: 'GET', path: '/api/paper/positions' },
   { method: 'POST', path: '/api/paper/reset' },
+  { method: 'GET', path: '/api/feeds/status' },
+  { method: 'POST', path: '/api/feeds/demo/tick/SPY' },
+  { method: 'GET', path: '/api/feeds/tick/SPY' },
+  { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
+  { method: 'GET', path: '/api/feeds/candle/SPY?timeframe=1m' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
