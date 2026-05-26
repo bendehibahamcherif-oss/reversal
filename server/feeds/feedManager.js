@@ -13,8 +13,15 @@ class FeedManager {
   }
   rebuildProviderStatuses() {
     for (const provider of providerRegistry.list()) {
-      const s = providerRegistry.getStatus(provider.id);
-      this.statusBySource.set(provider.id, createFeedStatus({ source: provider.id, ...s }));
+      const registryStatus = providerRegistry.getStatus(provider.id);
+      const existing = this.statusBySource.get(provider.id) || createFeedStatus({ source: provider.id });
+      this.statusBySource.set(provider.id, createFeedStatus({
+        ...existing,
+        source: provider.id,
+        status: registryStatus.status,
+        connected: registryStatus.connected,
+        warnings: registryStatus.warnings || existing.warnings || []
+      }));
     }
   }
   listProviders() {
@@ -34,7 +41,12 @@ class FeedManager {
   ingestCandle(c){ const n=createNormalizedCandle(c); this.latestCandles.set(`${n.symbol}:${n.timeframe}`,n); this.bumpStatus(n.source,n.symbol,n.timestamp); return n; }
   ingestOrderBook(b){ const n=createNormalizedOrderBook(b); this.latestOrderBooks.set(n.symbol,n); this.bumpStatus(n.source,n.symbol,n.timestamp); return n; }
 
-  getLatestTick(symbol) { const sym=String(symbol||'').toUpperCase(); for (const source of this.activeProviders){ const from=this.latestTicks.get(sym); if (from && from.source===source) return from; } return this.latestTicks.get(sym) || null; }
+  getLatestTick(symbol) {
+    const sym = String(symbol || '').toUpperCase();
+    const from = this.latestTicks.get(sym);
+    if (!from) return null;
+    return this.activeProviders.includes(from.source) ? from : null;
+  }
   getLatestCandle(symbol,timeframe='1m'){ const key=`${String(symbol||'').toUpperCase()}:${timeframe}`; const cached=this.latestCandles.get(key); if(cached) return cached; const fromStore=getCandlesWithMeta(symbol,timeframe); const candles=fromStore?.candles||[]; if(!candles.length) return null; const last=candles[candles.length-1]; return createNormalizedCandle({symbol,timeframe,open:last.o,high:last.h,low:last.l,close:last.c,volume:last.v,source:fromStore.source||'fallback_demo',timestamp:last.t}); }
   getLatestOrderBook(symbol){ return this.latestOrderBooks.get(String(symbol||'').toUpperCase()) || null; }
   generateDemoTick(symbol){ const normalized=String(symbol||'SPY').toUpperCase(); const base=500+seededUnit(normalized.length*97)*50; const price=Number(base.toFixed(4)); return this.ingestTick({symbol:normalized,price,bid:Number((price-0.01).toFixed(4)),ask:Number((price+0.01).toFixed(4)),volume:1000,source:'fallback_demo',sequence:Date.now()%1_000_000}); }
