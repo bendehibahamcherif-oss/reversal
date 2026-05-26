@@ -24,9 +24,10 @@ class StrategyLabEngine {
   }
 
   async saveManualStrategy(strategy) {
+    const manualStatus = String(strategy?.status || '').toLowerCase();
     const saved = createSavedStrategy({
       ...strategy,
-      status: 'draft',
+      status: manualStatus === 'research_only' ? 'research_only' : 'draft',
     });
     return strategyLabStore.saveStrategy(saved);
   }
