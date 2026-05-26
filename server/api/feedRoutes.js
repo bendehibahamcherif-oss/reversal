@@ -12,8 +12,8 @@ feedRoutes.post('/providers/active', (req, res) => res.json({ success: true, act
 feedRoutes.get('/providers/:provider', (req, res) => { const provider = feedManager.getProvider(req.params.provider); if (!provider) return res.status(404).json({ success: false, error: 'provider_not_found' }); return res.json({ success: true, provider }); });
 feedRoutes.post('/providers/:provider/credentials', (req, res) => { const meta = feedManager.setProviderCredentials(req.params.provider, req.body || {}); if (!meta) return res.status(404).json({ success: false, error: 'provider_not_found' }); return res.json({ success: true, credentials: meta }); });
 feedRoutes.delete('/providers/:provider/credentials', (req, res) => { const meta = feedManager.clearProviderCredentials(req.params.provider); if (!meta) return res.status(404).json({ success: false, error: 'provider_not_found' }); return res.json({ success: true, credentials: meta }); });
-feedRoutes.get('/tick/:symbol', (req, res) => res.json({ success: true, tick: feedManager.getLatestTick(req.params.symbol) }));
-feedRoutes.get('/candle/:symbol', (req, res) => res.json({ success: true, candle: feedManager.getLatestCandle(req.params.symbol, req.query?.timeframe || '1m') }));
+feedRoutes.get('/tick/:symbol', async (req, res) => res.json({ success: true, tick: await feedManager.getLatestTick(req.params.symbol) }));
+feedRoutes.get('/candle/:symbol', async (req, res) => res.json({ success: true, candle: await feedManager.getLatestCandle(req.params.symbol, req.query?.timeframe || '1m') }));
 feedRoutes.get('/orderbook/:symbol', (req, res) => res.json({ success: true, orderbook: feedManager.getLatestOrderBook(req.params.symbol) }));
 feedRoutes.post('/demo/tick/:symbol', (req, res) => res.json({ success: true, tick: feedManager.generateDemoTick(req.params.symbol) }));
 feedRoutes.post('/demo/candle/:symbol', (req, res) => res.json({ success: true, candle: feedManager.generateDemoCandle(req.params.symbol, req.query?.timeframe || req.body?.timeframe || '1m') }));
