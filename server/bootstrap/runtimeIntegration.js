@@ -16,6 +16,7 @@ import sessionContextRoutes from '../api/sessionContextRoutes.js';
 import reversalRoutes from '../api/reversalRoutes.js';
 import paperTradingRoutes from '../api/paperTradingRoutes.js';
 import feedRoutes from '../api/feedRoutes.js';
+import chartRoutes from '../api/chartRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -56,4 +57,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/reversals', reversalRoutes);
   app.use('/api/paper', paperTradingRoutes);
   app.use('/api/feeds', feedRoutes);
+  app.use('/api/chart', chartRoutes);
 }

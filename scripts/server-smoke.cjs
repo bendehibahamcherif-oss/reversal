@@ -60,6 +60,11 @@ const checks = [
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
   { method: 'GET', path: '/api/feeds/candle/SPY?timeframe=1m' },
+  { method: 'GET', path: '/api/chart/candles/SPY?timeframe=1m&limit=50' },
+  { method: 'GET', path: '/api/chart/indicators/SPY?timeframe=1m' },
+  { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
+  { method: 'GET', path: '/api/chart/orderflow/SPY' },
+  { method: 'GET', path: '/api/chart/payload/SPY?timeframe=1m&limit=50' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
