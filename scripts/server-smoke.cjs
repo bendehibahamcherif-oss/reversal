@@ -40,6 +40,8 @@ const checks = [
   { method: 'GET', path: '/api/templates/strategies' },
   { method: 'GET', path: '/api/session-context/SPY' },
   { method: 'POST', path: '/api/session-context/compute/SPY' },
+  { method: 'GET', path: '/api/reversals/points/SPY' },
+  { method: 'POST', path: '/api/reversals/detect/SPY' },
   { method: 'POST', path: '/api/templates/strategies/opening-gap-contrarian-reversal/create-rule-set', body: { symbol: 'SPY', overrides: { timeframe: '5m' } } },
   { method: 'POST', path: '/api/rules/set/SPY', body: { name: 'Smoke Rule Set', description: 'Safe smoke rule set only for deterministic backend checks.', timeframe: '1h', status: 'draft', tags: ['smoke','rules'], conditions: [{ field: 'score', operator: '>=', value: 0, source: 'qualityScore', timeframe: '1h', enabled: true }], actions: [{ type: 'entry_exit', direction: 'long', entryLogic: 'Enter only if rule condition passes in research mode.', exitLogic: 'Exit if rule fails on reevaluation.', stopLossLogic: 'Use protective stop.', takeProfitLogic: 'Use conservative take profit.', invalidationCondition: 'Invalidate when condition fails.', riskRules: { maxRiskPerTrade: 0.005 } }], riskRules: { maxDailyRisk: 0.01 } } },
 ];

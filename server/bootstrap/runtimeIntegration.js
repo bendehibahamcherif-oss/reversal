@@ -13,6 +13,7 @@ import strategyLabRoutes from '../api/strategyLabRoutes.js';
 import ruleEngineRoutes from '../api/ruleEngineRoutes.js';
 import strategyTemplateRoutes from '../api/strategyTemplateRoutes.js';
 import sessionContextRoutes from '../api/sessionContextRoutes.js';
+import reversalRoutes from '../api/reversalRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -50,4 +51,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/rules', ruleEngineRoutes);
   app.use('/api/templates', strategyTemplateRoutes);
   app.use('/api/session-context', sessionContextRoutes);
+  app.use('/api/reversals', reversalRoutes);
 }
