@@ -36,6 +36,8 @@ const checks = [
   { method: 'POST', path: '/api/strategy-lab/save/SPY', body: { name: 'Smoke Manual Save', type: 'manual', direction: 'long', timeframe: '1h', entryLogic: 'Breakout above VWAP', exitLogic: 'Trailing stop below EMA', riskRules: { maxRiskPct: 1 }, notes: 'Smoke check manual save route', tags: ['smoke', 'manual'] } },
   { method: 'POST', path: '/api/strategy-lab/strategies/SPY', body: { name: 'Smoke Alias Save', type: 'manual', direction: 'short', timeframe: '15m', entryLogic: 'Reversal at resistance', exitLogic: 'Take profit at support', riskRules: { maxRiskPct: 0.5 }, notes: 'Smoke check alias route', tags: ['smoke', 'alias'] } },
   { method: 'GET', path: '/api/strategy-lab/strategies/SPY' },
+  { method: 'GET', path: '/api/rules/sets/SPY' },
+  { method: 'POST', path: '/api/rules/set/SPY', body: { name: 'Smoke Rule Set', description: 'Safe smoke rule set only for deterministic backend checks.', timeframe: '1h', status: 'draft', tags: ['smoke','rules'], conditions: [{ field: 'score', operator: '>=', value: 0, source: 'qualityScore', timeframe: '1h', enabled: true }], actions: [{ type: 'entry_exit', direction: 'long', entryLogic: 'Enter only if rule condition passes in research mode.', exitLogic: 'Exit if rule fails on reevaluation.', stopLossLogic: 'Use protective stop.', takeProfitLogic: 'Use conservative take profit.', invalidationCondition: 'Invalidate when condition fails.', riskRules: { maxRiskPerTrade: 0.005 } }], riskRules: { maxDailyRisk: 0.01 } } },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -101,8 +103,13 @@ async function run() {
 
   try {
     await waitForReady();
+    let createdRuleSetId = '';
     for (const check of checks) {
-      const response = await fetch(`${BASE_URL}${check.path}`, {
+      let path = check.path;
+      if (path.includes(':id')) {
+        path = path.replace(':id', createdRuleSetId);
+      }
+      const response = await fetch(`${BASE_URL}${path}`, {
         method: check.method,
         headers: { 'Content-Type': 'application/json' },
         body: check.body ? JSON.stringify(check.body) : undefined,
@@ -117,11 +124,19 @@ async function run() {
       }
 
       if (!response.ok) {
-        throw new Error(`${check.method} ${check.path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
+        throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
       if (check.path === '/api/quant/pipeline/SPY' && !Array.isArray(parsed.qualityScores)) {
         throw new Error('POST /api/quant/pipeline/SPY missing qualityScores array');
+      }
+
+
+      if (check.method === 'POST' && check.path === '/api/rules/set/SPY') {
+        createdRuleSetId = parsed?.ruleSet?.id || '';
+        if (!createdRuleSetId) throw new Error('POST /api/rules/set/SPY missing created rule set id');
+        checks.push({ method: 'POST', path: `/api/rules/evaluate/SPY/${createdRuleSetId}` });
+        checks.push({ method: 'POST', path: `/api/rules/convert/SPY/${createdRuleSetId}` });
       }
 
       if (check.method === 'GET' && check.path === '/api/strategy-lab/strategies/SPY') {
@@ -131,7 +146,7 @@ async function run() {
         }
       }
 
-      console.log(`OK ${check.method} ${check.path}`);
+      console.log(`OK ${check.method} ${path}`);
     }
   } finally {
     server.kill('SIGTERM');
