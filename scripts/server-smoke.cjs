@@ -37,6 +37,8 @@ const checks = [
   { method: 'POST', path: '/api/strategy-lab/strategies/SPY', body: { name: 'Smoke Alias Save', type: 'manual', direction: 'short', timeframe: '15m', entryLogic: 'Reversal at resistance', exitLogic: 'Take profit at support', riskRules: { maxRiskPct: 0.5 }, notes: 'Smoke check alias route', tags: ['smoke', 'alias'] } },
   { method: 'GET', path: '/api/strategy-lab/strategies/SPY' },
   { method: 'GET', path: '/api/rules/sets/SPY' },
+  { method: 'GET', path: '/api/templates/strategies' },
+  { method: 'POST', path: '/api/templates/strategies/opening-gap-contrarian-reversal/create-rule-set', body: { symbol: 'SPY', overrides: { timeframe: '5m' } } },
   { method: 'POST', path: '/api/rules/set/SPY', body: { name: 'Smoke Rule Set', description: 'Safe smoke rule set only for deterministic backend checks.', timeframe: '1h', status: 'draft', tags: ['smoke','rules'], conditions: [{ field: 'score', operator: '>=', value: 0, source: 'qualityScore', timeframe: '1h', enabled: true }], actions: [{ type: 'entry_exit', direction: 'long', entryLogic: 'Enter only if rule condition passes in research mode.', exitLogic: 'Exit if rule fails on reevaluation.', stopLossLogic: 'Use protective stop.', takeProfitLogic: 'Use conservative take profit.', invalidationCondition: 'Invalidate when condition fails.', riskRules: { maxRiskPerTrade: 0.005 } }], riskRules: { maxDailyRisk: 0.01 } } },
 ];
 
