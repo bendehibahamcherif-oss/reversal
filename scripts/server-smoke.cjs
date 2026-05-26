@@ -136,6 +136,28 @@ async function run() {
       }
 
 
+
+      if (check.method === 'POST' && check.path === '/api/templates/strategies/opening-gap-contrarian-reversal/create-rule-set') {
+        const templateRuleSetId = parsed?.ruleSet?.id || '';
+        if (!templateRuleSetId) throw new Error('Template create-rule-set response missing id');
+        const evalResponse = await fetch(`${BASE_URL}/api/rules/evaluate/SPY/${templateRuleSetId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const evalParsed = await evalResponse.json();
+        if (!evalResponse.ok) {
+          throw new Error(`Template rule set evaluate failed with ${evalResponse.status}: ${JSON.stringify(evalParsed)}`);
+        }
+        const sessionContextEvals = [
+          ...(Array.isArray(evalParsed.matchedConditions) ? evalParsed.matchedConditions : []),
+          ...(Array.isArray(evalParsed.failedConditions) ? evalParsed.failedConditions : []),
+        ].filter((condition) => condition?.source === 'sessionContext');
+        if (sessionContextEvals.length === 0) {
+          throw new Error('Template rule set evaluation missing sessionContext condition results');
+        }
+        console.log(`OK POST /api/rules/evaluate/SPY/${templateRuleSetId} (template sessionContext check)`);
+      }
+
       if (check.method === 'POST' && check.path === '/api/rules/set/SPY') {
         createdRuleSetId = parsed?.ruleSet?.id || '';
         if (!createdRuleSetId) throw new Error('POST /api/rules/set/SPY missing created rule set id');

@@ -7,6 +7,7 @@ import { qualityEngine } from '../quality/qualityEngine.js';
 import { analysisTrendEngine } from '../analytics/analysisTrendEngine.js';
 import { backtestEngine } from '../backtest/backtestEngine.js';
 import { strategyEngine } from '../strategies/strategyEngine.js';
+import { sessionContextEngine } from '../sessionContext/sessionContextEngine.js';
 
 class RuleEngine {
   constructor() {
@@ -41,7 +42,8 @@ class RuleEngine {
     const ruleSet = await this.getRuleSetById(ruleSetId);
     if (!ruleSet) return null;
     const warnings = [];
-    const ctx = await this.getContext(normalized);
+    const ctx = await this.getContext(normalized, ruleSet.timeframe || '1m');
+    if (Array.isArray(ctx._warnings)) warnings.push(...ctx._warnings);
     const matched = [];
     const failed = [];
 
@@ -75,7 +77,17 @@ class RuleEngine {
     });
   }
 
-  async getContext(symbol) {
+  async getContext(symbol, timeframe = '1m') {
+    let sessionContext = sessionContextEngine.getLatestContext(symbol);
+    const warnings = [];
+    if (!sessionContext) {
+      sessionContext = sessionContextEngine.computeSessionContext(symbol, timeframe);
+      warnings.push(`Session context not precomputed for ${symbol}; computed on-demand using timeframe ${timeframe}.`);
+    }
+    if (sessionContext?.source === 'fallback_demo') {
+      warnings.push(`Session context for ${symbol} uses fallback_demo source; treat evaluation as research-only.`);
+    }
+
     return {
       alpha: alphaEngine.getSignals(symbol),
       pattern: patternEngine.getPatterns(symbol),
@@ -84,6 +96,8 @@ class RuleEngine {
       analytics: await analysisTrendEngine.getLatestTrend(symbol),
       backtest: backtestEngine.getBacktestResults(symbol),
       strategy: strategyEngine.getStrategies(symbol),
+      sessionContext,
+      _warnings: warnings,
     };
   }
 
@@ -93,7 +107,7 @@ class RuleEngine {
       return { conditionId: condition.id, passed: false, warning: `Missing source data for ${condition.source}`, source: condition.source, field: condition.field, operator: condition.operator, expectedValue: condition.value, actualValue: null };
     }
 
-    const actual = this.resolveField(sourceData, condition.field);
+    const actual = this.resolveField(sourceData, condition.field, condition.source, ctx);
     if (actual === undefined) {
       return { conditionId: condition.id, passed: false, warning: `Field not found: ${condition.source}.${condition.field}`, source: condition.source, field: condition.field, operator: condition.operator, expectedValue: condition.value, actualValue: null };
     }
@@ -102,11 +116,27 @@ class RuleEngine {
     return { conditionId: condition.id, passed, source: condition.source, field: condition.field, operator: condition.operator, expectedValue: condition.value, actualValue: actual };
   }
 
-  resolveField(sourceData, fieldPath) {
+  resolveField(sourceData, fieldPath, source, ctx = {}) {
     const path = String(fieldPath || '').trim();
     if (!path) return sourceData;
     const root = Array.isArray(sourceData) ? sourceData[sourceData.length - 1] : sourceData;
-    return path.split('.').reduce((acc, key) => (acc && typeof acc === 'object' ? acc[key] : undefined), root);
+
+    const sourceAliases = {
+      sessionContext: {
+        'openingGap.percent': 'openingGapPercent',
+        'openingGap.direction': 'gapDirection',
+        'session.minutesSinceOpen': 'minutesSinceOpen',
+      },
+    };
+
+    const aliasPath = sourceAliases[source]?.[path] || path;
+    const resolved = aliasPath.split('.').reduce((acc, key) => (acc && typeof acc === 'object' ? acc[key] : undefined), root);
+
+    if (resolved !== undefined) return resolved;
+    if (source === 'quantFeature' && path === 'vwap_distance') {
+      return ctx?.sessionContext?.vwapDistance;
+    }
+    return undefined;
   }
 
   applyOperator(operator, actual, expected) {
