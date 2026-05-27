@@ -65,6 +65,10 @@ const checks = [
   { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
   { method: 'GET', path: '/api/chart/orderflow/SPY' },
   { method: 'GET', path: '/api/chart/payload/SPY?timeframe=1m&limit=50' },
+  { method: 'POST', path: '/api/ai/features/save/SPY' },
+  { method: 'GET', path: '/api/ai/features/SPY' },
+  { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
+  { method: 'GET', path: '/api/ai/labels/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
