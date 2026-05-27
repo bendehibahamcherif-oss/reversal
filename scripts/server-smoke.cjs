@@ -69,6 +69,12 @@ const checks = [
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
   { method: 'GET', path: '/api/ai/labels/SPY' },
+  { method: 'GET', path: '/api/ai/regime/SPY' },
+  { method: 'POST', path: '/api/ai/analytics/analyze/SPY' },
+  { method: 'GET', path: '/api/ai/analytics/SPY' },
+  { method: 'GET', path: '/api/ai/analytics/features/SPY' },
+  { method: 'GET', path: '/api/ai/analytics/regimes/SPY' },
+  { method: 'DELETE', path: '/api/ai/analytics/SPY' },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
