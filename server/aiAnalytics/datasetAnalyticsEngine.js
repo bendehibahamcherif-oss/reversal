@@ -91,6 +91,37 @@ class DatasetAnalyticsEngine {
     this.memory.unshift(analytics);
     return analytics;
   }
+
+  async getLatestAnalytics(symbol, timeframe = '') {
+    const s = String(symbol || '').toUpperCase();
+    const tf = String(timeframe || '').trim();
+    if (this.isMongoAvailable()) {
+      try {
+        const query = s ? { symbol: s } : {};
+        if (tf) query.timeframe = tf;
+        const row = await DatasetAnalytics.findOne(query).sort({ createdAt: -1 }).lean();
+        return row ? { id: String(row._id), ...row } : null;
+      } catch (err) {
+        console.warn(`DatasetAnalyticsEngine Mongo latest read failed, using in-memory fallback: ${err.message}`);
+      }
+    }
+    return this.memory.find((x) => (!s || x.symbol === s) && (!tf || x.timeframe === tf)) || null;
+  }
+
+  async clearAnalytics(symbol) {
+    const s = String(symbol || '').toUpperCase();
+    if (this.isMongoAvailable()) {
+      try {
+        const r = await DatasetAnalytics.deleteMany(s ? { symbol: s } : {});
+        return { deleted: r.deletedCount || 0, implemented: true };
+      } catch (err) {
+        console.warn(`DatasetAnalyticsEngine Mongo clear failed, using in-memory fallback: ${err.message}`);
+      }
+    }
+    const before = this.memory.length;
+    this.memory = s ? this.memory.filter((x) => x.symbol !== s) : [];
+    return { deleted: before - this.memory.length, implemented: true };
+  }
 }
 
 export const datasetAnalyticsEngine = new DatasetAnalyticsEngine();
