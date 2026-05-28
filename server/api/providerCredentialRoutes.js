@@ -93,15 +93,15 @@ providerCredentialRoutes.delete('/credentials/:provider', (req, res) => {
 
 providerCredentialRoutes.get('/status', (_req, res) => {
   const providers = feedManager.listProviders().map((provider) => ({
-    provider: provider.id,
-    configured: provider.configured,
-    enabled: provider.enabled,
-    active: provider.active,
-    usable: provider.runtime?.usable,
-    credentialLoaded: provider.runtime?.credentialLoaded,
-    providerInitialized: provider.runtime?.providerInitialized,
-    lastError: provider.runtime?.lastError || null,
-    status: provider.runtime?.status || provider.status,
+    provider: String(provider.provider || provider.id || ''),
+    configured: Boolean(provider.configured),
+    enabled: Boolean(provider.enabled),
+    active: Boolean(provider.active),
+    usable: Boolean(provider.usable),
+    credentialLoaded: Boolean(provider.credentialLoaded),
+    providerInitialized: Boolean(provider.providerInitialized),
+    lastError: provider.lastError || null,
+    status: String(provider.status || 'unknown'),
   }));
   res.json({ success: true, providers });
 });
@@ -112,14 +112,15 @@ providerCredentialRoutes.get('/active', (_req, res) => {
 
 providerCredentialRoutes.get('/runtime', (_req, res) => {
   const providers = feedManager.listProviders().map((provider) => ({
-    provider: provider.id,
-    configured: provider.configured,
-    enabled: provider.enabled,
-    active: provider.active,
-    usable: provider.runtime?.usable,
-    credentialLoaded: provider.runtime?.credentialLoaded,
-    providerInitialized: provider.runtime?.providerInitialized,
-    lastError: provider.runtime?.lastError || null,
+    provider: String(provider.provider || provider.id || ''),
+    configured: Boolean(provider.configured),
+    enabled: Boolean(provider.enabled),
+    active: Boolean(provider.active),
+    usable: Boolean(provider.usable),
+    credentialLoaded: Boolean(provider.credentialLoaded),
+    providerInitialized: Boolean(provider.providerInitialized),
+    lastError: provider.lastError || null,
+    status: String(provider.status || 'unknown'),
     runtime: provider.runtime,
   }));
   res.json({ success: true, providers });
