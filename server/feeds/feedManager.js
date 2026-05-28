@@ -8,6 +8,9 @@ function seededUnit(seed) { const x = Math.sin(seed * 12.9898) * 43758.5453; ret
 
 const DEFAULT_DATA_PROVIDER = String(process.env.DEFAULT_DATA_PROVIDER || 'yahoo');
 const DEFAULT_FALLBACK_PROVIDER = 'fallback_demo';
+const YAHOO_TRANSIENT_GRACE_MS = Math.max(0, Number(process.env.YAHOO_TRANSIENT_GRACE_MS || 300000));
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function normalizeSymbolList(symbols = []) { return Array.isArray(symbols) ? symbols.map((s) => String(s).toUpperCase()).filter(Boolean) : []; }
 
@@ -149,6 +152,29 @@ class FeedManager {
     };
   }
 
+  getProviderHealth(providerId = 'yahoo') {
+    const provider = providerRegistry.get(providerId);
+    if (!provider) {
+      return {
+        provider: String(providerId || ''),
+        healthy: false,
+        lastSuccessAt: null,
+        consecutiveFailures: 0,
+        lastFailureReason: 'provider_not_found',
+        fallbackActive: true,
+      };
+    }
+    if (typeof provider.getHealth === 'function') return provider.getHealth();
+    return {
+      provider: provider.id,
+      healthy: true,
+      lastSuccessAt: null,
+      consecutiveFailures: 0,
+      lastFailureReason: null,
+      fallbackActive: false,
+    };
+  }
+
   recordProviderFailure(provider, error) {
     const providerId = String(provider || 'unknown');
     this.providerFailures.set(providerId, {
@@ -224,6 +250,20 @@ class FeedManager {
         }
         console.warn('[replayProviderChain]', JSON.stringify({ event: 'provider_failed', symbol: normalizedSymbol, timeframe, provider: source, reason: 'empty_result' }));
         this.recordProviderFailure(source, { code: 'empty_result' });
+        if (source === 'yahoo') {
+          const health = this.getProviderHealth('yahoo');
+          const lastSuccessAt = health?.lastSuccessAt ? Date.parse(health.lastSuccessAt) : 0;
+          const withinGrace = lastSuccessAt && (Date.now() - lastSuccessAt) <= YAHOO_TRANSIENT_GRACE_MS;
+          if (withinGrace && Number(health?.consecutiveFailures || 0) <= 1) {
+            console.warn('[replayProviderChain]', JSON.stringify({ event: 'yahoo_grace_retry', symbol: normalizedSymbol, timeframe, reason: 'transient_empty_after_recent_success' }));
+            await sleep(175);
+            const retried = await provider.getCandles(normalizedSymbol, timeframe, normalizedLimit, credentials);
+            if (Array.isArray(retried) && retried.length > 0) {
+              console.info('[replayProviderChain]', JSON.stringify({ event: 'provider_success_after_retry', symbol: normalizedSymbol, timeframe, provider: source, candleCount: retried.length }));
+              return { symbol: normalizedSymbol, timeframe, source: source, candles: retried };
+            }
+          }
+        }
       } catch (error) {
         console.warn('[replayProviderChain]', JSON.stringify({ event: 'provider_failed', symbol: normalizedSymbol, timeframe, provider: source, reason: String(error?.code || error?.message || 'provider_failed') }));
         this.recordProviderFailure(source, error);

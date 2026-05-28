@@ -9,11 +9,19 @@ const TIMEFRAME_MAP = {
 };
 
 const DEFAULT_TIMEFRAME = TIMEFRAME_MAP['1m'];
-const YAHOO_TIMEOUT_MS = Number(process.env.YAHOO_TIMEOUT_MS || 5000);
-const YAHOO_RETRIES = Math.max(0, Number(process.env.YAHOO_RETRIES || 2));
+const YAHOO_TIMEOUT_MS = Number(process.env.YAHOO_TIMEOUT_MS || 8000);
+const YAHOO_RETRIES = Math.max(0, Number(process.env.YAHOO_RETRIES || 3));
 const YAHOO_MIN_INTERVAL_MS = Math.max(0, Number(process.env.YAHOO_MIN_INTERVAL_MS || 250));
 const YAHOO_MAX_JITTER_MS = Math.max(0, Number(process.env.YAHOO_MAX_JITTER_MS || 175));
+const YAHOO_BASE_BACKOFF_MS = Math.max(50, Number(process.env.YAHOO_BASE_BACKOFF_MS || 250));
+const YAHOO_MAX_BACKOFF_MS = Math.max(YAHOO_BASE_BACKOFF_MS, Number(process.env.YAHOO_MAX_BACKOFF_MS || 2500));
+const YAHOO_STALE_WINDOW_MS = Math.max(60_000, Number(process.env.YAHOO_STALE_WINDOW_MS || 86_400_000));
 let nextAllowedAt = 0;
+const healthState = {
+  lastSuccessAt: null,
+  consecutiveFailures: 0,
+  lastFailureReason: null,
+};
 
 function getYahooChartUrl(symbol, { interval, range }) {
   const encoded = encodeURIComponent(String(symbol || '').toUpperCase());
@@ -22,7 +30,22 @@ function getYahooChartUrl(symbol, { interval, range }) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function jitterMs() { return Math.floor(Math.random() * (YAHOO_MAX_JITTER_MS + 1)); }
+function backoffMs(attempt) { return Math.min(YAHOO_MAX_BACKOFF_MS, (YAHOO_BASE_BACKOFF_MS * (2 ** Math.max(0, attempt))) + jitterMs()); }
 function logYahoo(event, details = {}) { console.info('[yahooProvider]', JSON.stringify({ event, provider: 'yahoo', ...details })); }
+function recordFailure(reason) {
+  healthState.consecutiveFailures += 1;
+  healthState.lastFailureReason = String(reason || 'request_failed');
+}
+function recordSuccess() {
+  healthState.lastSuccessAt = new Date().toISOString();
+  healthState.consecutiveFailures = 0;
+  healthState.lastFailureReason = null;
+}
+function isTimestampStale(epochSeconds) {
+  if (!Number.isFinite(epochSeconds)) return true;
+  const ageMs = Date.now() - (Number(epochSeconds) * 1000);
+  return ageMs > YAHOO_STALE_WINDOW_MS;
+}
 
 function normalizeSymbolForYahoo(symbol) {
   const raw = String(symbol || '').trim();
@@ -79,7 +102,9 @@ async function fetchYahooChart(symbol, timeframe) {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
           Accept: 'application/json,text/plain,*/*',
           'Accept-Language': 'en-US,en;q=0.9',
+          Referer: 'https://finance.yahoo.com/',
           'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
         },
       });
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
@@ -87,14 +112,16 @@ async function fetchYahooChart(symbol, timeframe) {
       if (!response.ok) {
         if (response.status === 429) logYahoo('rate_limited', { symbol: yahooSymbol, status: response.status, attempt: attempt + 1 });
         if (response.status === 429 || response.status >= 500) {
-          await sleep(150 * (attempt + 1) + jitterMs());
+          await sleep(backoffMs(attempt));
           continue;
         }
+        recordFailure(`bad_status_${response.status}`);
         return { data: null, error: { provider: 'yahoo', code: 'bad_status', status: response.status, retryable: false } };
       }
       if (contentType.includes('text/html')) {
         const preview = (await response.text()).slice(0, 180);
         logYahoo('html_or_captcha_response', { symbol: yahooSymbol, preview, attempt: attempt + 1 });
+        recordFailure('html_response');
         return { data: null, error: { provider: 'yahoo', code: 'html_response', retryable: true } };
       }
       let payload;
@@ -102,28 +129,41 @@ async function fetchYahooChart(symbol, timeframe) {
         payload = await response.json();
       } catch (error) {
         logYahoo('parse_failed', { symbol: yahooSymbol, message: String(error?.message || 'json_parse_failed'), attempt: attempt + 1 });
+        recordFailure('parse_failed');
         return { data: null, error: { provider: 'yahoo', code: 'parse_failed', retryable: true } };
       }
       const validated = validateYahooPayload(payload);
       if (!validated) {
         const emptyPayload = !payload?.chart?.result?.length;
         logYahoo(emptyPayload ? 'empty_payload' : 'invalid_payload', { symbol: yahooSymbol, attempt: attempt + 1 });
+        recordFailure(emptyPayload ? 'empty_payload' : 'invalid_payload');
         return { data: null, error: { provider: 'yahoo', code: emptyPayload ? 'empty_payload' : 'invalid_payload', retryable: false } };
       }
       const latestIdx = getLatestValidIndex(validated.quote, validated.timestamps);
       if (latestIdx < 0) {
         logYahoo('stale_or_no_valid_close', { symbol: yahooSymbol, candles: validated.timestamps.length, attempt: attempt + 1 });
+        recordFailure('stale_data');
         return { data: null, error: { provider: 'yahoo', code: 'stale_data', retryable: true } };
       }
+      if (isTimestampStale(validated.timestamps[latestIdx])) {
+        logYahoo('stale_timestamp', { symbol: yahooSymbol, latestTimestamp: validated.timestamps[latestIdx], attempt: attempt + 1 });
+        recordFailure('stale_timestamp');
+        return { data: null, error: { provider: 'yahoo', code: 'stale_timestamp', retryable: true } };
+      }
+      recordSuccess();
       return { data: validated, error: null };
     } catch (error) {
       const normalized = normalizeYahooError(error, { attempt: attempt + 1 });
       if (normalized.code === 'timeout') logYahoo('timeout', { symbol: yahooSymbol, timeoutMs: YAHOO_TIMEOUT_MS, attempt: attempt + 1 });
       else logYahoo('request_failed', { symbol: yahooSymbol, message: normalized.message, attempt: attempt + 1 });
-      if (attempt >= YAHOO_RETRIES) return { data: null, error: normalized };
-      await sleep(150 * (attempt + 1) + jitterMs());
+      if (attempt >= YAHOO_RETRIES) {
+        recordFailure(normalized.code || normalized.message);
+        return { data: null, error: normalized };
+      }
+      await sleep(backoffMs(attempt));
     }
   }
+  recordFailure('exhausted_retries');
   return { data: null, error: { provider: 'yahoo', code: 'exhausted_retries', retryable: true } };
 }
 
@@ -220,6 +260,18 @@ export const yahooProvider = {
       parsedCandleCount: response.data?.timestamps?.length || 0,
       validationWarnings: warnings,
       fallbackTriggered: Boolean(response.error),
+    };
+  },
+  getHealth(){
+    const fallbackThreshold = Math.max(1, YAHOO_RETRIES + 1);
+    const healthy = healthState.consecutiveFailures < fallbackThreshold;
+    return {
+      provider: 'yahoo',
+      healthy,
+      lastSuccessAt: healthState.lastSuccessAt,
+      consecutiveFailures: healthState.consecutiveFailures,
+      lastFailureReason: healthState.lastFailureReason,
+      fallbackActive: !healthy,
     };
   },
   getLatestOrderBook(){ return null; }
