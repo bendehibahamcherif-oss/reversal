@@ -49,11 +49,8 @@ providerCredentialRoutes.post('/credentials', (req, res) => {
       return res.status(400).json(buildValidationError('API key format is invalid.', [{ field: 'apiKey', message: 'Use 8-128 chars: letters, numbers, underscore, hyphen.' }]));
     }
 
-    if (provider.configured) {
-      return res.status(409).json(buildValidationError('Provider credentials already exist.', [{ field: 'provider', message: `Credentials already configured for '${providerId}'. Delete first to replace.` }]));
-    }
-
     const saved = feedManager.setProviderCredentials(providerId, { apiKey, apiSecret, enabled });
+    console.info('[providerCredentials] save', JSON.stringify({ provider: providerId, configured: Boolean(saved?.configured), enabled: Boolean(saved?.enabled) }));
     const runtime = feedManager.validateProviderRuntime(providerId);
 
     return res.status(201).json({
@@ -87,10 +84,45 @@ providerCredentialRoutes.delete('/credentials/:provider', (req, res) => {
       return res.status(404).json({ success: false, error: { code: 'provider_not_found', message: `Provider '${providerId}' does not exist.` } });
     }
     const cleared = feedManager.clearProviderCredentials(providerId);
+    console.info('[providerCredentials] clear', JSON.stringify({ provider: providerId }));
     return res.json({ success: true, message: `Credentials cleared for provider '${providerId}'.`, credential: sanitizeCredentialMeta(cleared) });
   } catch {
     return res.status(500).json({ success: false, error: { code: 'credential_delete_failed', message: 'Unable to delete provider credentials.' } });
   }
+});
+
+providerCredentialRoutes.get('/status', (_req, res) => {
+  const providers = feedManager.listProviders().map((provider) => ({
+    provider: provider.id,
+    configured: provider.configured,
+    enabled: provider.enabled,
+    active: provider.active,
+    usable: provider.runtime?.usable,
+    credentialLoaded: provider.runtime?.credentialLoaded,
+    providerInitialized: provider.runtime?.providerInitialized,
+    lastError: provider.runtime?.lastError || null,
+    status: provider.runtime?.status || provider.status,
+  }));
+  res.json({ success: true, providers });
+});
+
+providerCredentialRoutes.get('/active', (_req, res) => {
+  res.json({ success: true, ...feedManager.getActiveProviders() });
+});
+
+providerCredentialRoutes.get('/runtime', (_req, res) => {
+  const providers = feedManager.listProviders().map((provider) => ({
+    provider: provider.id,
+    configured: provider.configured,
+    enabled: provider.enabled,
+    active: provider.active,
+    usable: provider.runtime?.usable,
+    credentialLoaded: provider.runtime?.credentialLoaded,
+    providerInitialized: provider.runtime?.providerInitialized,
+    lastError: provider.runtime?.lastError || null,
+    runtime: provider.runtime,
+  }));
+  res.json({ success: true, providers });
 });
 
 export default providerCredentialRoutes;

@@ -43,8 +43,9 @@ function loadStore() {
         updatedAt: toStringOrEmpty(record?.updatedAt) || new Date().toISOString()
       });
     }
+    console.info('[credentialStore] loaded', JSON.stringify({ providers: credentialMap.size }));
   } catch {
-    // Swallow parsing or IO errors to keep startup resilient.
+    console.warn('[credentialStore] load_failed');
   }
 }
 
@@ -52,9 +53,12 @@ function persistStore() {
   try {
     ensureDir();
     const records = Array.from(credentialMap.values());
-    fs.writeFileSync(STORE_PATH, JSON.stringify({ version: 1, records }, null, 2), { encoding: 'utf8', mode: 0o600 });
+    const tmpPath = `${STORE_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify({ version: 1, records }, null, 2), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tmpPath, STORE_PATH);
+    console.info('[credentialStore] persisted', JSON.stringify({ providers: records.length }));
   } catch {
-    // Avoid leaking credential material in logs.
+    console.warn('[credentialStore] persist_failed');
   }
 }
 
