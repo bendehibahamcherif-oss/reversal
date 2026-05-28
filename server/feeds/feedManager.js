@@ -93,8 +93,63 @@ class FeedManager {
   rebuildProviderStatuses() {
     for (const provider of providerRegistry.list()) {
       const s = providerRegistry.getStatus(provider.id);
-      this.statusBySource.set(provider.id, createFeedStatus({ source: provider.id, ...s }));
+      const current = this.statusBySource.get(provider.id);
+      const isDemo = provider.id === DEFAULT_FALLBACK_PROVIDER;
+      this.statusBySource.set(provider.id, createFeedStatus({
+        source: provider.id,
+        ...s,
+        connected: isDemo ? false : Boolean(current?.connected || s.connected || current?.lastMessageAt),
+        symbols: Array.isArray(current?.symbols) ? current.symbols : [],
+        lastMessageAt: current?.lastMessageAt || null,
+        warnings: Array.isArray(current?.warnings) && current.warnings.length ? current.warnings : s.warnings,
+      }));
     }
+  }
+
+  promoteProviderActivity({ source, symbol, timeframe = '1m', candles = [] } = {}) {
+    const provider = String(source || '').trim();
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    if (!provider || !normalizedSymbol) return;
+
+    const lastCandle = Array.isArray(candles) && candles.length ? candles[candles.length - 1] : null;
+    if (lastCandle) {
+      const promotedCandle = this.ingestCandle({
+        symbol: normalizedSymbol,
+        timeframe,
+        open: Number(lastCandle.o ?? lastCandle.open ?? lastCandle.c ?? lastCandle.close),
+        high: Number(lastCandle.h ?? lastCandle.high ?? lastCandle.c ?? lastCandle.close),
+        low: Number(lastCandle.l ?? lastCandle.low ?? lastCandle.c ?? lastCandle.close),
+        close: Number(lastCandle.c ?? lastCandle.close),
+        volume: Number(lastCandle.v ?? lastCandle.volume ?? 0),
+        timestamp: lastCandle.t ?? lastCandle.timestamp,
+        source: provider,
+      });
+      this.ingestTick({
+        symbol: normalizedSymbol,
+        price: promotedCandle.close,
+        bid: promotedCandle.low,
+        ask: promotedCandle.high,
+        volume: promotedCandle.volume,
+        timestamp: promotedCandle.timestamp,
+        source: provider,
+      });
+      console.info('[liveState]', JSON.stringify({ event: 'candle_cache_update', source: provider, symbol: normalizedSymbol, timeframe, timestamp: promotedCandle.timestamp }));
+      console.info('[liveState]', JSON.stringify({ event: 'tick_cache_update', source: provider, symbol: normalizedSymbol, timestamp: promotedCandle.timestamp }));
+    }
+
+    const current = this.getFeedStatusBySource(provider);
+    const symbols = new Set(current.symbols || []);
+    symbols.add(normalizedSymbol);
+    this.statusBySource.set(provider, createFeedStatus({
+      ...current,
+      source: provider,
+      status: provider === DEFAULT_FALLBACK_PROVIDER ? 'idle_demo' : 'connected',
+      connected: provider === DEFAULT_FALLBACK_PROVIDER ? false : true,
+      symbols: Array.from(symbols),
+      lastMessageAt: lastCandle?.t ?? lastCandle?.timestamp ?? new Date().toISOString(),
+      warnings: provider === DEFAULT_FALLBACK_PROVIDER ? ['Demo fallback source only. Not a live feed.'] : [],
+    }));
+    console.info('[liveState]', JSON.stringify({ event: 'provider_promoted', source: provider, symbol: normalizedSymbol, connected: provider !== DEFAULT_FALLBACK_PROVIDER }));
   }
 
   listProviders() {
@@ -230,7 +285,10 @@ class FeedManager {
       }
     }
     const fromStore = getCandlesWithMeta(symbol, timeframe); const candles = fromStore?.candles || []; if (!candles.length) return null; const last = candles[candles.length - 1];
-    return createNormalizedCandle({ symbol, timeframe, open: last.o, high: last.h, low: last.l, close: last.c, volume: last.v, source: fromStore.source || DEFAULT_FALLBACK_PROVIDER, timestamp: last.t });
+    const normalized = createNormalizedCandle({ symbol, timeframe, open: last.o, high: last.h, low: last.l, close: last.c, volume: last.v, source: fromStore.source || DEFAULT_FALLBACK_PROVIDER, timestamp: last.t });
+    this.latestCandles.set(key, normalized);
+    this.promoteProviderActivity({ source: normalized.source, symbol: sym, timeframe, candles: [last] });
+    return normalized;
   }
   async getReplayCandles(symbol, timeframe = '1m', limit = 200) {
     const normalizedSymbol = String(symbol || '').toUpperCase();
@@ -246,6 +304,8 @@ class FeedManager {
         const candles = await provider.getCandles(normalizedSymbol, timeframe, normalizedLimit, credentials);
         if (Array.isArray(candles) && candles.length > 0) {
           console.info('[replayProviderChain]', JSON.stringify({ event: 'provider_success', symbol: normalizedSymbol, timeframe, provider: source, candleCount: candles.length }));
+          this.promoteProviderActivity({ source, symbol: normalizedSymbol, timeframe, candles });
+          console.info('[replayProviderChain]', JSON.stringify({ event: 'replay_candle_success', symbol: normalizedSymbol, timeframe, provider: source, promotedToLiveState: true }));
           return { symbol: normalizedSymbol, timeframe, source: source, candles };
         }
         console.warn('[replayProviderChain]', JSON.stringify({ event: 'provider_failed', symbol: normalizedSymbol, timeframe, provider: source, reason: 'empty_result' }));
@@ -260,6 +320,7 @@ class FeedManager {
             const retried = await provider.getCandles(normalizedSymbol, timeframe, normalizedLimit, credentials);
             if (Array.isArray(retried) && retried.length > 0) {
               console.info('[replayProviderChain]', JSON.stringify({ event: 'provider_success_after_retry', symbol: normalizedSymbol, timeframe, provider: source, candleCount: retried.length }));
+              this.promoteProviderActivity({ source, symbol: normalizedSymbol, timeframe, candles: retried });
               return { symbol: normalizedSymbol, timeframe, source: source, candles: retried };
             }
           }
@@ -271,7 +332,7 @@ class FeedManager {
     }
 
     const fromStore = getCandlesWithMeta(normalizedSymbol, timeframe);
-    console.warn('[replayProviderChain]', JSON.stringify({ event: 'fallback_activated', symbol: normalizedSymbol, timeframe, reason: 'all_realtime_providers_failed', fallbackSource: fromStore?.source || DEFAULT_FALLBACK_PROVIDER }));
+    console.warn('[replayProviderChain]', JSON.stringify({ event: 'fallback_activated', symbol: normalizedSymbol, timeframe, reason: 'all_realtime_providers_failed', fallbackSource: fromStore?.source || DEFAULT_FALLBACK_PROVIDER, providerFailures: Array.from(this.providerFailures.values()) }));
     return {
       symbol: normalizedSymbol,
       timeframe,
