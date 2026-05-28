@@ -23,15 +23,17 @@ class FeedManager {
     const normalizedRuntime = runtime || this.getRuntimeState(provider.id);
     const apiKeyMasked = String(provider.apiKeyMasked || provider.apiKey || '');
     const maskedFields = Array.isArray(provider.maskedFields) ? provider.maskedFields.filter(Boolean).map((field) => String(field)) : (apiKeyMasked ? [`apiKey:${apiKeyMasked}`] : []);
+    const credentialLoaded = Boolean(normalizedRuntime.credentialLoaded);
     return {
       provider: String(provider.id || provider.provider || ''),
-      configured: Boolean(provider.configured),
+      configured: credentialLoaded,
       enabled: Boolean(provider.enabled),
       active: Boolean(provider.active),
       usable: Boolean(normalizedRuntime.usable),
-      credentialLoaded: Boolean(normalizedRuntime.credentialLoaded),
+      credentialLoaded,
       providerInitialized: Boolean(normalizedRuntime.providerInitialized),
       lastError: normalizedRuntime.lastError || null,
+      status: String(normalizedRuntime.status || provider.status || 'unknown'),
       apiKeyMasked,
       maskedFields
     };
@@ -94,7 +96,8 @@ class FeedManager {
       const runtime = this.getRuntimeState(p.id);
       const meta = credentialStore.getMeta(p.id);
       const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...meta, enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: providerRegistry.getStatus(p.id).status, connected: providerRegistry.getStatus(p.id).connected, warnings: providerRegistry.getStatus(p.id).warnings || [] };
-      return { ...provider, contract: this.normalizeProviderContract(provider, runtime) };
+      const contract = this.normalizeProviderContract(provider, runtime);
+      return { ...provider, ...contract, contract };
     });
   }
   getProvider(providerId) { const p = providerRegistry.get(providerId); if (!p) return null; const ps = providerRegistry.getStatus(providerId); const runtime = this.getRuntimeState(providerId); const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...credentialStore.getMeta(providerId), enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: ps.status, connected: ps.connected, warnings: ps.warnings || [] }; return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) }; }
@@ -106,7 +109,7 @@ class FeedManager {
     const provider = providerRegistry.get(providerId);
     const credentials = credentialStore.get(providerId);
     if (!provider) {
-      return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, providerEnabled: false, providerUsable: false, status: 'provider_not_found' };
+      return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, enabled: false, usable: false, active: false, status: 'provider_not_found', lastError: null };
     }
     const hasCredential = Boolean(credentials.apiKey);
     const credentialLoaded = !provider.requiresCredentials || hasCredential;
