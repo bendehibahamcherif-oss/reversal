@@ -1,4 +1,3 @@
-import { getCandlesWithMeta } from '../persistence/historicalStore.js';
 import { feedManager } from '../feeds/feedManager.js';
 import { reversalDetectorEngine } from '../reversal/reversalDetectorEngine.js';
 import { strategyEngine } from '../strategies/strategyEngine.js';
@@ -29,22 +28,23 @@ function rsi(values = [], period = 14) {
 }
 
 class ChartDataEngine {
-  getCandles(symbol, timeframe = '1m', limit = 200) {
+  async getCandles(symbol, timeframe = '1m', limit = 200) {
     const s = String(symbol || 'SPY').toUpperCase();
-    const payload = getCandlesWithMeta(s, timeframe);
-    const source = payload?.source || 'fallback_demo';
-    const candles = Array.isArray(payload?.candles) ? payload.candles.slice(-Math.max(1, Number(limit) || 200)) : [];
+    const replayData = await feedManager.getReplayCandles(s, timeframe, limit);
+    const source = replayData?.source || 'fallback_demo';
+    const isFallback = source === 'fallback_demo';
+    const rawCandles = Array.isArray(replayData?.candles) ? replayData.candles.slice(-Math.max(1, Number(limit) || 200)) : [];
     return {
       symbol: s,
       timeframe,
       source,
-      warnings: payload?.isFallbackDemo ? [payload.warning || 'Fallback demo candles used.'] : [],
-      candles: candles.map((c) => createChartCandle({ symbol: s, timeframe, time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: c.source || source })),
+      warnings: isFallback ? [replayData?.warning || 'Using fallback demo candles because no historical market data is available.'] : (replayData?.warning ? [replayData.warning] : []),
+      candles: rawCandles.map((c) => createChartCandle({ symbol: s, timeframe, time: c.t ?? c.timestamp, open: c.o ?? c.open, high: c.h ?? c.high, low: c.l ?? c.low, close: c.c ?? c.close, volume: c.v ?? c.volume ?? 0, source: c.source || source })),
     };
   }
 
-  getIndicators(symbol, timeframe = '1m', indicators = ['vwap', 'ema9', 'ema20', 'rsi14', 'volume_avg', 'volume_zscore']) {
-    const candlePayload = this.getCandles(symbol, timeframe, 400);
+  async getIndicators(symbol, timeframe = '1m', indicators = ['vwap', 'ema9', 'ema20', 'rsi14', 'volume_avg', 'volume_zscore'], preloadedCandles = null) {
+    const candlePayload = preloadedCandles || await this.getCandles(symbol, timeframe, 400);
     const candles = candlePayload.candles;
     const closes = candles.map((c) => c.close);
     const volumes = candles.map((c) => c.volume);
@@ -87,12 +87,14 @@ class ChartDataEngine {
     return { symbol: s, warnings: ob.source === 'fallback_demo' ? ['Orderbook source is fallback_demo and not live.'] : [], orderflow: createOrderflowSnapshot({ symbol: s, bids: ob.bids || [], asks: ob.asks || [], spread: ob.spread || 0, imbalance, liquidityPressure: imbalance - 0.5, source: ob.source || 'unknown', timestamp: ob.timestamp || new Date().toISOString() }) };
   }
 
-  buildChartPayload(symbol, timeframe = '1m', limit = 200) {
-    const candles = this.getCandles(symbol, timeframe, limit);
-    const indicators = this.getIndicators(symbol, timeframe, ['vwap', 'ema9', 'ema20', 'rsi14', 'volume_avg', 'volume_zscore']);
+  async buildChartPayload(symbol, timeframe = '1m', limit = 200) {
+    const fetchLimit = Math.max(Number(limit) || 200, 400);
+    const allCandles = await this.getCandles(symbol, timeframe, fetchLimit);
+    const chartCandles = { ...allCandles, candles: allCandles.candles.slice(-(Number(limit) || 200)) };
+    const indicators = await this.getIndicators(symbol, timeframe, ['vwap', 'ema9', 'ema20', 'rsi14', 'volume_avg', 'volume_zscore'], allCandles);
     const overlays = this.getOverlays(symbol, timeframe);
     const orderflow = this.getOrderflow(symbol);
-    return { symbol: candles.symbol, timeframe, source: candles.source, warnings: [...candles.warnings, ...indicators.warnings, ...orderflow.warnings], candles: candles.candles, indicators: indicators.indicators, overlays: overlays.overlays, orderflow: orderflow.orderflow };
+    return { symbol: chartCandles.symbol, timeframe, source: chartCandles.source, warnings: [...chartCandles.warnings, ...indicators.warnings, ...orderflow.warnings], candles: chartCandles.candles, indicators: indicators.indicators, overlays: overlays.overlays, orderflow: orderflow.orderflow };
   }
 }
 
