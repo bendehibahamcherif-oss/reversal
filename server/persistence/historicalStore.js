@@ -51,14 +51,24 @@ function seededUnit(seed) {
   return x - Math.floor(x);
 }
 
+function getSymbolBasePrice(symbol) {
+  const s = String(symbol).toUpperCase();
+  if (/^(EUR|GBP|AUD|NZD)/.test(s) || /=X$/.test(s)) return 1.1;
+  if (/JPY/.test(s)) return 150;
+  if (/BTC/.test(s)) return 60000;
+  if (/ETH/.test(s)) return 3000;
+  return 500;
+}
+
 function getFallbackCandles(symbol = 'SPY', timeframe = '1m', count = 360) {
   const normalized = String(symbol || 'SPY').toUpperCase();
   const timeframeMs = timeframeToMs(timeframe) || 60_000;
   const now = alignTimestamp(Date.now(), timeframeMs);
 
   const candles = [];
-  let price = 500;
-  let volumeBase = 150_000;
+  let price = getSymbolBasePrice(normalized);
+  const volumeBase0 = price < 10 ? 1_000_000_000 : price < 1000 ? 150_000 : 50;
+  let volumeBase = volumeBase0;
 
   for (let i = count - 1; i >= 0; i -= 1) {
     const t = now - (i * timeframeMs);
@@ -91,7 +101,7 @@ function getFallbackCandles(symbol = 'SPY', timeframe = '1m', count = 360) {
     });
 
     price = close;
-    volumeBase = Math.max(100_000, volumeBase + (seededUnit((count - i) + 23) - 0.5) * 2_000);
+    volumeBase = Math.max(volumeBase0 * 0.5, volumeBase + (seededUnit((count - i) + 23) - 0.5) * volumeBase0 * 0.01);
   }
 
   return candles;
