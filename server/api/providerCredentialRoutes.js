@@ -131,4 +131,9 @@ providerCredentialRoutes.get('/debug-state', (_req, res) => {
   res.json({ success: true, ...state });
 });
 
+providerCredentialRoutes.get('/health', (_req, res) => {
+  const health = feedManager.getProviderHealth('yahoo');
+  res.json(health);
+});
+
 export default providerCredentialRoutes;
