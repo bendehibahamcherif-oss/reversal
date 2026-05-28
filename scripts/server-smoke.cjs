@@ -60,6 +60,9 @@ const checks = [
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
   { method: 'GET', path: '/api/feeds/candle/SPY?timeframe=1m' },
+  { method: 'GET', path: '/api/volume-profile/SPY?timeframe=1m&bins=24' },
+  { method: 'GET', path: '/api/volume-profile/BTC-USD?timeframe=1m' },
+  { method: 'GET', path: '/api/volume-profile/EURUSD%3DX?timeframe=1m' },
   { method: 'GET', path: '/api/chart/candles/SPY?timeframe=1m&limit=50' },
   { method: 'GET', path: '/api/chart/indicators/SPY?timeframe=1m' },
   { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
@@ -209,6 +212,12 @@ async function run() {
         const provider = parsed?.provider || {};
         if (!provider.configured || !Array.isArray(provider.maskedFields) || provider.maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
           throw new Error('GET provider should only return masked credential metadata');
+        }
+      }
+
+      if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
+        if (!parsed.success || !Array.isArray(parsed.profile) || !parsed.poc || parsed.vah == null || parsed.val == null) {
+          throw new Error(`${check.path} missing required volume profile fields (profile, poc, vah, val)`);
         }
       }
 
