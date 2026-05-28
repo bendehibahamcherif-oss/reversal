@@ -60,9 +60,11 @@ const checks = [
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
   { method: 'GET', path: '/api/feeds/candle/SPY?timeframe=1m' },
-  { method: 'GET', path: '/api/volume-profile/SPY?timeframe=1m&bins=24' },
-  { method: 'GET', path: '/api/volume-profile/BTC-USD?timeframe=1m' },
-  { method: 'GET', path: '/api/volume-profile/EURUSD%3DX?timeframe=1m' },
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=visible_range&bins=50' },
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=daily&bins=50' },
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=session&bins=100' },
+  { method: 'GET', path: '/api/volume-profile/BTC-USD?mode=visible_range&bins=200' },
+  { method: 'GET', path: '/api/volume-profile/EURUSD%3DX?mode=visible_range&bins=50' },
   { method: 'GET', path: '/api/chart/candles/SPY?timeframe=1m&limit=50' },
   { method: 'GET', path: '/api/chart/indicators/SPY?timeframe=1m' },
   { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
@@ -216,8 +218,20 @@ async function run() {
       }
 
       if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
-        if (!parsed.success || !Array.isArray(parsed.profile) || !parsed.poc || parsed.vah == null || parsed.val == null) {
-          throw new Error(`${check.path} missing required volume profile fields (profile, poc, vah, val)`);
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (!Array.isArray(parsed.profile)) throw new Error(`${check.path} missing profile array`);
+        const binsParam = Number(new URL(`http://x${check.path}`).searchParams.get('bins') || 50);
+        if (parsed.bins !== binsParam) throw new Error(`${check.path} bins mismatch: got ${parsed.bins}`);
+        if (parsed.profile.length > 0 && parsed.poc == null) throw new Error(`${check.path} missing poc`);
+        if (parsed.profile.length > 0 && parsed.vah == null) throw new Error(`${check.path} missing vah`);
+        if (parsed.profile.length > 0 && parsed.val == null) throw new Error(`${check.path} missing val`);
+        if (!Array.isArray(parsed.hvn)) throw new Error(`${check.path} hvn must be array`);
+        if (!Array.isArray(parsed.lvn)) throw new Error(`${check.path} lvn must be array`);
+        if (parsed.profile.length > 0) {
+          const first = parsed.profile[0];
+          if (first.price == null || first.priceLevel == null || first.binLow == null || first.binHigh == null || first.volume == null) {
+            throw new Error(`${check.path} profile item missing required fields (price/priceLevel/binLow/binHigh/volume)`);
+          }
         }
       }
 
