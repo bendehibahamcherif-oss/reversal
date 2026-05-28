@@ -1,3 +1,5 @@
+import marketStreamRoutes from '../api/marketStreamRoutes.js';
+import { marketStreamEngine } from '../marketStream/MarketStreamEngine.js';
 import replayRoutes from '../api/replayRoutes.js';
 import replayLegacyRoutes from '../api/replaySessionRoutes.js';
 import replaySessionRoutes from '../api/replaySessionControlRoutes.js';
@@ -40,6 +42,16 @@ export function applyRuntimeIntegration(app) {
   app.get('/api/runtime/health', runtimeHealthResponse);
   app.get('/api/runtime/runtime-status', runtimeHealthResponse);
   app.get('/api/monitoring/runtime-status', runtimeHealthResponse);
+
+  // MarketStreamEngine diagnostic routes — mounted at /api to intercept
+  // /api/providers/health, /api/market/runtime, /api/market/subscriptions
+  // before the generic /api/market → feedRoutes alias below.
+  app.use('/api', marketStreamRoutes);
+
+  // Initialize the stream engine asynchronously after routes are mounted
+  marketStreamEngine.initialize().catch((e) =>
+    console.warn('[runtimeIntegration] MarketStreamEngine init failed:', e?.message),
+  );
 
   app.use('/api/replay', replayRoutes);
   app.use('/api/replay-legacy', replayLegacyRoutes);
