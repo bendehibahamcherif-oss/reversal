@@ -15,6 +15,11 @@ feedRoutes.delete('/providers/:provider/credentials', (req, res) => { const meta
 feedRoutes.get('/tick/:symbol', async (req, res) => res.json({ success: true, tick: await feedManager.getLatestTick(req.params.symbol) }));
 feedRoutes.get('/candle/:symbol', async (req, res) => res.json({ success: true, candle: await feedManager.getLatestCandle(req.params.symbol, req.query?.timeframe || '1m') }));
 feedRoutes.get('/orderbook/:symbol', (req, res) => res.json({ success: true, orderbook: feedManager.getLatestOrderBook(req.params.symbol) }));
+feedRoutes.get('/debug/yahoo/:symbol', async (req, res) => {
+  const result = await feedManager.debugYahoo(req.params.symbol, req.query?.timeframe || '1m');
+  const status = result?.request?.success ? 200 : 502;
+  return res.status(status).json({ success: result?.request?.success, ...result });
+});
 feedRoutes.post('/demo/tick/:symbol', (req, res) => res.json({ success: true, tick: feedManager.generateDemoTick(req.params.symbol) }));
 feedRoutes.post('/demo/candle/:symbol', (req, res) => res.json({ success: true, candle: feedManager.generateDemoCandle(req.params.symbol, req.query?.timeframe || req.body?.timeframe || '1m') }));
 feedRoutes.post('/demo/orderbook/:symbol', (req, res) => res.json({ success: true, orderbook: feedManager.generateDemoOrderBook(req.params.symbol) }));

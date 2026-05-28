@@ -58,6 +58,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/reversals', reversalRoutes);
   app.use('/api/paper', paperTradingRoutes);
   app.use('/api/feeds', feedRoutes);
+  app.use('/api/market', feedRoutes);
   app.use('/api/chart', chartRoutes);
   app.use('/api/ai', aiRoutes);
 }
