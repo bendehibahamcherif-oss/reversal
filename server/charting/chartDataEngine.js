@@ -7,7 +7,26 @@ import { paperTradingEngine } from '../paperTrading/paperTradingEngine.js';
 import { createChartCandle, createChartIndicator, createChartOverlay, createOrderflowSnapshot } from './models.js';
 
 function ema(values = [], period = 9) { const k = 2 / (period + 1); let prev = values[0] || 0; return values.map((v, i) => { if (i === 0) return prev; prev = (v * k) + (prev * (1 - k)); return prev; }); }
-function rsi(values = [], period = 14) { if (values.length < 2) return values.map(() => 50); const out = [50]; let gains = 0; let losses = 0; for (let i = 1; i < values.length; i += 1) { const d = values[i] - values[i - 1]; gains += Math.max(d, 0); losses += Math.max(-d, 0); if (i < period) { out.push(50); continue; } const avgG = gains / period; const avgL = losses / period; const rs = avgL === 0 ? 100 : avgG / avgL; out.push(100 - (100 / (1 + rs))); gains = Math.max(d, 0); losses = Math.max(-d, 0); } return out; }
+function rsi(values = [], period = 14) {
+  if (values.length < period + 1) return values.map(() => 50);
+  const out = new Array(period).fill(50);
+  let avgGain = 0; let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = values[i] - values[i - 1];
+    avgGain += Math.max(d, 0);
+    avgLoss += Math.max(-d, 0);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  out.push(100 - (100 / (1 + (avgLoss === 0 ? 100 : avgGain / avgLoss))));
+  for (let i = period + 1; i < values.length; i++) {
+    const d = values[i] - values[i - 1];
+    avgGain = ((avgGain * (period - 1)) + Math.max(d, 0)) / period;
+    avgLoss = ((avgLoss * (period - 1)) + Math.max(-d, 0)) / period;
+    out.push(100 - (100 / (1 + (avgLoss === 0 ? 100 : avgGain / avgLoss))));
+  }
+  return out;
+}
 
 class ChartDataEngine {
   getCandles(symbol, timeframe = '1m', limit = 200) {
