@@ -23,12 +23,14 @@ export const activeProviderStore = {
   load() {
     const payload = readJsonSafe(STORE_FILE);
     if (!payload || typeof payload !== 'object') return null;
-    return {
+    const state = {
       providers: Array.isArray(payload.providers) ? payload.providers : [],
       enabledByProvider: payload.enabledByProvider && typeof payload.enabledByProvider === 'object' ? payload.enabledByProvider : {},
       symbols: Array.isArray(payload.symbols) ? payload.symbols : [],
       updatedAt: payload.updatedAt || null,
     };
+    console.info('[activeProviderStore] loaded', JSON.stringify({ providers: state.providers.length }));
+    return state;
   },
   save(state) {
     ensureStoreDir();
@@ -38,8 +40,10 @@ export const activeProviderStore = {
       symbols: Array.isArray(state?.symbols) ? state.symbols : [],
       updatedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(STORE_FILE, JSON.stringify(payload, null, 2));
+    const tmpFile = `${STORE_FILE}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(payload, null, 2));
+    fs.renameSync(tmpFile, STORE_FILE);
+    console.info('[activeProviderStore] persisted', JSON.stringify({ providers: payload.providers.length }));
     return payload;
   },
 };
-

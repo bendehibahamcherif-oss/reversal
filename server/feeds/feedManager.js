@@ -21,7 +21,7 @@ class FeedManager {
 
   getRuntimeState(providerId) {
     const runtime = this.validateProviderRuntime(providerId);
-    return { ...runtime, valid: runtime.providerInitialized && runtime.providerUsable && runtime.credentialLoaded };
+    return { ...runtime, valid: runtime.providerInitialized && runtime.usable && runtime.credentialLoaded && runtime.enabled };
   }
 
   resolveActiveState({ providers = [], enabledByProvider = {}, symbols = [] } = {}) {
@@ -92,14 +92,16 @@ class FeedManager {
     const credentialLoaded = !provider.requiresCredentials || hasCredential;
     const providerInitialized = typeof provider.status === 'function';
     const state = providerInitialized ? provider.status(credentials) : { status: 'unknown', connected: false };
-    const providerUsable = !provider.requiresCredentials || state.status !== 'missing_credentials';
-    const providerEnabled = Boolean(this.enabledByProvider[provider.id]);
-    return { provider: provider.id, credentialLoaded, providerInitialized, providerEnabled, providerUsable, status: state.status };
+    const usable = !provider.requiresCredentials || state.status !== 'missing_credentials';
+    const enabled = this.enabledByProvider[provider.id] !== undefined ? Boolean(this.enabledByProvider[provider.id]) : true;
+    return { provider: provider.id, credentialLoaded, providerInitialized, enabled, usable, active: this.activeProviders.includes(provider.id), status: state.status, lastError: state.lastError || null };
   }
   setActiveProviders({ providers = [], enabledByProvider = {}, symbols = [] } = {}) {
     const fallbackPrevious = { providers: this.activeProviders, enabledByProvider: this.enabledByProvider, symbols: this.activeSymbols };
     const mergedEnabled = { ...this.enabledByProvider, ...(enabledByProvider || {}) };
-    const resolved = this.resolveActiveState({ providers: Array.isArray(providers) && providers.length ? providers : fallbackPrevious.providers, enabledByProvider: mergedEnabled, symbols: Array.isArray(symbols) ? symbols : fallbackPrevious.symbols });
+    const hasProvidersField = Array.isArray(providers);
+    const providerInput = hasProvidersField ? providers : fallbackPrevious.providers;
+    const resolved = this.resolveActiveState({ providers: providerInput.length ? providerInput : fallbackPrevious.providers, enabledByProvider: mergedEnabled, symbols: Array.isArray(symbols) ? symbols : fallbackPrevious.symbols });
     if (!resolved.providers.length && fallbackPrevious.providers.length) return this.getActiveProviders();
     this.activeProviders = resolved.providers;
     this.enabledByProvider = resolved.enabledByProvider;
@@ -118,8 +120,8 @@ class FeedManager {
   ingestCandle(c) { const n = createNormalizedCandle(c); this.latestCandles.set(`${n.symbol}:${n.timeframe}`, n); this.bumpStatus(n.source, n.symbol, n.timestamp); return n; }
   ingestOrderBook(b) { const n = createNormalizedOrderBook(b); this.latestOrderBooks.set(n.symbol, n); this.bumpStatus(n.source, n.symbol, n.timestamp); return n; }
 
-  async getLatestTick(symbol) { const sym = String(symbol || '').toUpperCase(); for (const source of this.activeProviders) { const from = this.latestTicks.get(sym); if (from && from.source === source) return from; const provider = providerRegistry.get(source); if (provider?.getLatestTick) { try { const live = await provider.getLatestTick(sym); if (live) return this.ingestTick(live); } catch { continue; } } } return this.latestTicks.get(sym) || null; }
-  async getLatestCandle(symbol, timeframe = '1m') { const key = `${String(symbol || '').toUpperCase()}:${timeframe}`; const cached = this.latestCandles.get(key); if (cached) return cached; const sym = String(symbol || '').toUpperCase(); for (const source of this.activeProviders) { const provider = providerRegistry.get(source); if (provider?.getLatestCandle) { try { const live = await provider.getLatestCandle(sym, timeframe); if (live) return this.ingestCandle(live); } catch { continue; } } } const fromStore = getCandlesWithMeta(symbol, timeframe); const candles = fromStore?.candles || []; if (!candles.length) return null; const last = candles[candles.length - 1]; return createNormalizedCandle({ symbol, timeframe, open: last.o, high: last.h, low: last.l, close: last.c, volume: last.v, source: fromStore.source || DEFAULT_FALLBACK_PROVIDER, timestamp: last.t }); }
+  async getLatestTick(symbol) { const sym = String(symbol || '').toUpperCase(); for (const source of this.activeProviders) { const from = this.latestTicks.get(sym); if (from && from.source === source) return from; const provider = providerRegistry.get(source); const credentials = credentialStore.get(source); if (provider?.getLatestTick) { try { const live = await provider.getLatestTick(sym, credentials); if (live) return this.ingestTick(live); } catch { continue; } } } return this.latestTicks.get(sym) || null; }
+  async getLatestCandle(symbol, timeframe = '1m') { const key = `${String(symbol || '').toUpperCase()}:${timeframe}`; const cached = this.latestCandles.get(key); if (cached) return cached; const sym = String(symbol || '').toUpperCase(); for (const source of this.activeProviders) { const provider = providerRegistry.get(source); const credentials = credentialStore.get(source); if (provider?.getLatestCandle) { try { const live = await provider.getLatestCandle(sym, timeframe, credentials); if (live) return this.ingestCandle(live); } catch { continue; } } } const fromStore = getCandlesWithMeta(symbol, timeframe); const candles = fromStore?.candles || []; if (!candles.length) return null; const last = candles[candles.length - 1]; return createNormalizedCandle({ symbol, timeframe, open: last.o, high: last.h, low: last.l, close: last.c, volume: last.v, source: fromStore.source || DEFAULT_FALLBACK_PROVIDER, timestamp: last.t }); }
   getLatestOrderBook(symbol) { return this.latestOrderBooks.get(String(symbol || '').toUpperCase()) || null; }
   async debugYahoo(symbol, timeframe = '1m') {
     const yahooProvider = providerRegistry.get('yahoo');
