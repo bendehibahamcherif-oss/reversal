@@ -126,4 +126,9 @@ providerCredentialRoutes.get('/runtime', (_req, res) => {
   res.json({ success: true, providers });
 });
 
+providerCredentialRoutes.get('/debug-state', (_req, res) => {
+  const state = feedManager.getDebugState();
+  res.json({ success: true, ...state });
+});
+
 export default providerCredentialRoutes;
