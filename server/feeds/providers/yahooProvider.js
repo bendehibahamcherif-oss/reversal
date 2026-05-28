@@ -183,6 +183,28 @@ export const yahooProvider = {
       timestamp: new Date(chart.timestamps[idx] * 1000).toISOString(),
     };
   },
+  async getCandles(symbol, timeframe = '1m', limit = 200) {
+    const { data: chart } = await fetchYahooChart(symbol, timeframe);
+    if (!chart) return [];
+    const count = Math.max(1, Number(limit) || 200);
+    const items = [];
+    for (let i = 0; i < chart.timestamps.length; i += 1) {
+      const close = Number(chart.quote?.close?.[i]);
+      if (!Number.isFinite(close)) continue;
+      items.push({
+        symbol: String(symbol || '').toUpperCase(),
+        timeframe,
+        t: Number(chart.timestamps[i]) * 1000,
+        o: Number(chart.quote?.open?.[i] ?? close),
+        h: Number(chart.quote?.high?.[i] ?? close),
+        l: Number(chart.quote?.low?.[i] ?? close),
+        c: close,
+        v: Number(chart.quote?.volume?.[i]) || 0,
+        source: 'yahoo',
+      });
+    }
+    return items.slice(-count);
+  },
   async debugSymbol(symbol, timeframe = '1m') {
     const normalizedSymbol = normalizeSymbolForYahoo(symbol);
     const response = await fetchYahooChart(symbol, timeframe);

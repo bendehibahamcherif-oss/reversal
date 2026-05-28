@@ -206,6 +206,40 @@ class FeedManager {
     const fromStore = getCandlesWithMeta(symbol, timeframe); const candles = fromStore?.candles || []; if (!candles.length) return null; const last = candles[candles.length - 1];
     return createNormalizedCandle({ symbol, timeframe, open: last.o, high: last.h, low: last.l, close: last.c, volume: last.v, source: fromStore.source || DEFAULT_FALLBACK_PROVIDER, timestamp: last.t });
   }
+  async getReplayCandles(symbol, timeframe = '1m', limit = 200) {
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    const normalizedLimit = Math.max(1, Number(limit) || 200);
+    const chain = this.getActiveProviders().providerOrder;
+
+    for (const source of chain) {
+      const provider = providerRegistry.get(source);
+      if (!provider?.getCandles) continue;
+      const credentials = credentialStore.get(source);
+      console.info('[replayProviderChain]', JSON.stringify({ event: 'provider_selected', symbol: normalizedSymbol, timeframe, limit: normalizedLimit, provider: source }));
+      try {
+        const candles = await provider.getCandles(normalizedSymbol, timeframe, normalizedLimit, credentials);
+        if (Array.isArray(candles) && candles.length > 0) {
+          console.info('[replayProviderChain]', JSON.stringify({ event: 'provider_success', symbol: normalizedSymbol, timeframe, provider: source, candleCount: candles.length }));
+          return { symbol: normalizedSymbol, timeframe, source: source, candles };
+        }
+        console.warn('[replayProviderChain]', JSON.stringify({ event: 'provider_failed', symbol: normalizedSymbol, timeframe, provider: source, reason: 'empty_result' }));
+        this.recordProviderFailure(source, { code: 'empty_result' });
+      } catch (error) {
+        console.warn('[replayProviderChain]', JSON.stringify({ event: 'provider_failed', symbol: normalizedSymbol, timeframe, provider: source, reason: String(error?.code || error?.message || 'provider_failed') }));
+        this.recordProviderFailure(source, error);
+      }
+    }
+
+    const fromStore = getCandlesWithMeta(normalizedSymbol, timeframe);
+    console.warn('[replayProviderChain]', JSON.stringify({ event: 'fallback_activated', symbol: normalizedSymbol, timeframe, reason: 'all_realtime_providers_failed', fallbackSource: fromStore?.source || DEFAULT_FALLBACK_PROVIDER }));
+    return {
+      symbol: normalizedSymbol,
+      timeframe,
+      source: fromStore?.source || DEFAULT_FALLBACK_PROVIDER,
+      candles: Array.isArray(fromStore?.candles) ? fromStore.candles.slice(-normalizedLimit) : [],
+      warning: fromStore?.warning || null,
+    };
+  }
   getLatestOrderBook(symbol) { return this.latestOrderBooks.get(String(symbol || '').toUpperCase()) || null; }
   async debugYahoo(symbol, timeframe = '1m') {
     const yahooProvider = providerRegistry.get('yahoo');
