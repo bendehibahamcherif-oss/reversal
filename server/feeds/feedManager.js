@@ -40,6 +40,21 @@ class FeedManager {
   getProvider(providerId) { const p = providerRegistry.get(providerId); if (!p) return null; const ps = providerRegistry.getStatus(providerId); return { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...credentialStore.getMeta(providerId), status: ps.status, connected: ps.connected, warnings: ps.warnings || [] }; }
   setProviderCredentials(providerId, credentials) { const p = providerRegistry.get(providerId); if (!p) return null; credentialStore.set(providerId, credentials); this.rebuildProviderStatuses(); return credentialStore.getMeta(providerId); }
   clearProviderCredentials(providerId) { const p = providerRegistry.get(providerId); if (!p) return null; const meta = credentialStore.clear(providerId); this.rebuildProviderStatuses(); return meta; }
+
+  listProviderCredentials() { return credentialStore.listMeta(); }
+  validateProviderRuntime(providerId) {
+    const provider = providerRegistry.get(providerId);
+    const credentials = credentialStore.get(providerId);
+    if (!provider) {
+      return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, providerUsable: false, status: 'provider_not_found' };
+    }
+    const hasCredential = Boolean(credentials.apiKey);
+    const credentialLoaded = !provider.requiresCredentials || hasCredential;
+    const providerInitialized = typeof provider.status === 'function';
+    const state = providerInitialized ? provider.status(credentials) : { status: 'unknown', connected: false };
+    const providerUsable = !provider.requiresCredentials || state.status !== 'missing_credentials';
+    return { provider: provider.id, credentialLoaded, providerInitialized, providerUsable, status: state.status };
+  }
   setActiveProviders({ providers = [], symbols = [] } = {}) { this.activeProviders = resolveProviderPriority(providers); this.activeSymbols = Array.isArray(symbols) ? symbols.map((s) => String(s).toUpperCase()) : []; this.rebuildProviderStatuses(); return { providers: this.activeProviders, symbols: this.activeSymbols, defaultProvider: DEFAULT_DATA_PROVIDER }; }
   getActiveProviders() { return { providers: this.activeProviders, symbols: this.activeSymbols, defaultProvider: DEFAULT_DATA_PROVIDER }; }
 
