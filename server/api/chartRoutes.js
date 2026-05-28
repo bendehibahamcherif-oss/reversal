@@ -24,7 +24,17 @@ chartRoutes.get('/orderflow/:symbol', (req, res) => res.json({ success: true, ..
 chartRoutes.get('/payload/:symbol', (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
   const limit = Number(req.query?.limit || 200);
-  return res.json({ success: true, ...chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit) });
+  const payload = chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit);
+  const indicatorsObj = {};
+  if (Array.isArray(payload.indicators)) {
+    for (const ind of payload.indicators) {
+      const vals = Array.isArray(ind.values) ? ind.values : [];
+      indicatorsObj[ind.name] = vals.length ? (vals[vals.length - 1]?.value ?? null) : null;
+    }
+  } else if (payload.indicators && typeof payload.indicators === 'object') {
+    Object.assign(indicatorsObj, payload.indicators);
+  }
+  return res.json({ success: true, ...payload, indicators: indicatorsObj });
 });
 
 export default chartRoutes;
