@@ -268,11 +268,11 @@ class FeedManager {
   }
   async getLatestCandle(symbol, timeframe = '1m') {
     const key = `${String(symbol || '').toUpperCase()}:${timeframe}`;
-    const cached = this.latestCandles.get(key);
-    if (cached) return cached;
     const sym = String(symbol || '').toUpperCase();
     const chain = this.getActiveProviders().providerOrder;
     for (const source of chain) {
+      const cached = this.latestCandles.get(key);
+      if (cached && cached.source === source) return cached;
       const provider = providerRegistry.get(source);
       const credentials = credentialStore.get(source);
       if (!provider?.getLatestCandle) continue;
