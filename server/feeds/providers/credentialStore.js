@@ -20,6 +20,11 @@ function maskSecret(value = '') {
   return `${value.slice(0, 3)}${'*'.repeat(Math.max(4, value.length - 7))}${value.slice(-4)}`;
 }
 
+function buildMaskedFields(apiKeyMasked = '') {
+  if (!apiKeyMasked) return [];
+  return [`apiKey:${apiKeyMasked}`];
+}
+
 function ensureDir() {
   fs.mkdirSync(STORE_DIR, { recursive: true });
 }
@@ -116,13 +121,16 @@ export const credentialStore = {
     const provider = normalizeProvider(providerId);
     const record = credentialMap.get(provider);
     if (!record) {
-      return { provider, configured: false, enabled: false, apiKey: '', createdAt: null, updatedAt: null };
+      return { provider, configured: false, enabled: false, apiKey: '', apiKeyMasked: '', maskedFields: [], createdAt: null, updatedAt: null };
     }
+    const apiKeyMasked = maskSecret(record.apiKey);
     return {
       provider,
       configured: Boolean(record.apiKey),
       enabled: Boolean(record.enabled),
-      apiKey: maskSecret(record.apiKey),
+      apiKey: apiKeyMasked,
+      apiKeyMasked,
+      maskedFields: buildMaskedFields(apiKeyMasked),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     };
