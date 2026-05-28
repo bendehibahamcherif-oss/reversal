@@ -119,9 +119,11 @@ export const credentialStore = {
       configured: Boolean(record.apiKey),
       enabled: Boolean(record.enabled),
       apiKey: maskSecret(record.apiKey),
-      apiSecret: record.apiSecret ? maskSecret(record.apiSecret) : '',
       createdAt: record.createdAt,
       updatedAt: record.updatedAt
     };
+  },
+  listMeta() {
+    return Array.from(credentialMap.keys()).map((provider) => this.getMeta(provider));
   }
 };

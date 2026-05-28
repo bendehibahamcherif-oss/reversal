@@ -18,6 +18,7 @@ import paperTradingRoutes from '../api/paperTradingRoutes.js';
 import feedRoutes from '../api/feedRoutes.js';
 import chartRoutes from '../api/chartRoutes.js';
 import aiRoutes from '../api/aiRoutes.js';
+import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -61,4 +62,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/market', feedRoutes);
   app.use('/api/chart', chartRoutes);
   app.use('/api/ai', aiRoutes);
+  app.use('/api/providers', providerCredentialRoutes);
 }
