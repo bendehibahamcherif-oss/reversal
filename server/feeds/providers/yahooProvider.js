@@ -9,31 +9,77 @@ const TIMEFRAME_MAP = {
 };
 
 const DEFAULT_TIMEFRAME = TIMEFRAME_MAP['1m'];
+const YAHOO_TIMEOUT_MS = Number(process.env.YAHOO_TIMEOUT_MS || 5000);
+const YAHOO_RETRIES = Math.max(0, Number(process.env.YAHOO_RETRIES || 2));
+const YAHOO_MIN_INTERVAL_MS = Math.max(0, Number(process.env.YAHOO_MIN_INTERVAL_MS || 250));
+let nextAllowedAt = 0;
 
 function getYahooChartUrl(symbol, { interval, range }) {
   const encoded = encodeURIComponent(String(symbol || '').toUpperCase());
   return `https://query1.finance.yahoo.com/v8/finance/chart/${encoded}?interval=${interval}&range=${range}`;
 }
 
-async function fetchYahooChart(symbol, timeframe) {
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = YAHOO_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-  const mapping = TIMEFRAME_MAP[String(timeframe || '1m')] || DEFAULT_TIMEFRAME;
-  const response = await fetch(getYahooChartUrl(symbol, mapping), {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; reversal-proxy/1.0)'
-    }
-  });
-  if (!response.ok) return null;
-  const payload = await response.json();
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeYahooError(error, context = {}) {
+  const message = String(error?.message || 'yahoo_request_failed');
+  const aborted = error?.name === 'AbortError';
+  return {
+    provider: 'yahoo',
+    code: aborted ? 'timeout' : 'request_failed',
+    message,
+    retryable: true,
+    ...context,
+  };
+}
+
+function validateYahooPayload(payload) {
   const result = payload?.chart?.result?.[0];
-  if (!result) return null;
   const quote = result?.indicators?.quote?.[0];
   const timestamps = result?.timestamp || [];
-  if (!quote || !timestamps.length) return null;
+  if (!result || !quote || !Array.isArray(timestamps) || !timestamps.length) return null;
   return { quote, timestamps };
-  } catch {
-    return null;
+}
+
+async function fetchYahooChart(symbol, timeframe) {
+  const mapping = TIMEFRAME_MAP[String(timeframe || '1m')] || DEFAULT_TIMEFRAME;
+  const url = getYahooChartUrl(symbol, mapping);
+  for (let attempt = 0; attempt <= YAHOO_RETRIES; attempt += 1) {
+    try {
+      const waitMs = Math.max(0, nextAllowedAt - Date.now());
+      if (waitMs) await sleep(waitMs);
+      nextAllowedAt = Date.now() + YAHOO_MIN_INTERVAL_MS;
+      const response = await fetchWithTimeout(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; reversal-proxy/1.0)' },
+      });
+      if (!response.ok) {
+        if (response.status === 429 || response.status >= 500) {
+          await sleep(150 * (attempt + 1));
+          continue;
+        }
+        return { data: null, error: { provider: 'yahoo', code: 'bad_status', status: response.status, retryable: false } };
+      }
+      const payload = await response.json();
+      const validated = validateYahooPayload(payload);
+      if (!validated) return { data: null, error: { provider: 'yahoo', code: 'invalid_payload', retryable: false } };
+      return { data: validated, error: null };
+    } catch (error) {
+      const normalized = normalizeYahooError(error, { attempt: attempt + 1 });
+      if (attempt >= YAHOO_RETRIES) return { data: null, error: normalized };
+      await sleep(150 * (attempt + 1));
+    }
   }
+  return { data: null, error: { provider: 'yahoo', code: 'exhausted_retries', retryable: true } };
 }
 
 function getLatestValidIndex(quote, timestamps) {
@@ -52,12 +98,12 @@ export const yahooProvider = {
   supportsTicks:true,
   supportsCandles:true,
   supportsOrderBook:false,
-  status(){ return { status:'fallback_delayed', connected:false, warnings:['Yahoo is fallback/delayed/unofficial-style data and not institutional live feed.'] }; },
+  status(){ return { status:'fallback_delayed', connected:false, warnings:['Yahoo is fallback/delayed/unofficial-style data and not institutional live feed.'], metadata: { timeoutMs: YAHOO_TIMEOUT_MS, retries: YAHOO_RETRIES, minIntervalMs: YAHOO_MIN_INTERVAL_MS } }; },
   validateCredentials(){ return { valid:true, warnings:[] }; },
   start(){ return { status:'fallback_delayed', connected:false}; },
   stop(){ return {status:'stopped',connected:false}; },
   async getLatestTick(symbol){
-    const chart = await fetchYahooChart(symbol, '1m');
+    const { data: chart } = await fetchYahooChart(symbol, '1m');
     if (!chart) return null;
     const idx = getLatestValidIndex(chart.quote, chart.timestamps);
     if (idx < 0) return null;
@@ -76,7 +122,7 @@ export const yahooProvider = {
     };
   },
   async getLatestCandle(symbol, timeframe='1m'){
-    const chart = await fetchYahooChart(symbol, timeframe);
+    const { data: chart } = await fetchYahooChart(symbol, timeframe);
     if (!chart) return null;
     const idx = getLatestValidIndex(chart.quote, chart.timestamps);
     if (idx < 0) return null;
