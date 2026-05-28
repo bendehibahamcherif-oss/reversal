@@ -105,5 +105,29 @@ export const twelveDataProvider = {
       timestamp: candle.datetime ? new Date(candle.datetime).toISOString() : new Date().toISOString(),
     };
   },
+  async getCandles(symbol, timeframe = '1m', limit = 200, credentials = {}) {
+    if (!credentials.apiKey) return [];
+    const normalized = normalizeSymbol(symbol);
+    const interval = timeframeToInterval(timeframe);
+    const outputsize = Math.max(1, Math.min(5000, Number(limit) || 200));
+    const result = await callTwelveData('time_series', { symbol: normalized, interval, outputsize }, credentials.apiKey);
+    if (!result.ok) return [];
+    const values = Array.isArray(result.data?.values) ? result.data.values : [];
+    return values
+      .map((candle) => ({
+        symbol: normalized,
+        timeframe,
+        t: candle.datetime ? Date.parse(candle.datetime) : Date.now(),
+        o: Number(candle.open),
+        h: Number(candle.high),
+        l: Number(candle.low),
+        c: Number(candle.close),
+        v: Number(candle.volume) || 0,
+        source: 'twelvedata',
+      }))
+      .filter((candle) => Number.isFinite(candle.c) && Number.isFinite(candle.t))
+      .sort((a, b) => a.t - b.t)
+      .slice(-outputsize);
+  },
   getLatestOrderBook() { return null; },
 };
