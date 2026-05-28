@@ -4,6 +4,11 @@ import { outcomeLabeler } from '../ai/outcomeLabeler.js';
 import { regimeEngine } from '../aiAnalytics/regimeEngine.js';
 import { datasetAnalyticsEngine } from '../aiAnalytics/datasetAnalyticsEngine.js';
 
+import { datasetBuilderService } from '../ai/datasets/datasetBuilderService.js';
+import { datasetSplitService } from '../ai/datasets/datasetSplitService.js';
+import { trainingPipelineService } from '../ai/training/trainingPipelineService.js';
+import { modelRegistryService } from '../ai/registry/modelRegistryService.js';
+
 const aiRoutes = Router();
 aiRoutes.post('/features/save/:symbol', async (req,res)=>{ const symbol=String(req.params.symbol||'').toUpperCase(); const timeframe=req.body?.timeframe||req.query?.timeframe||'1m'; const record = req.body?.record || await featureStore.buildFeatureRecord(symbol,timeframe); const saved=await featureStore.saveFeatureRecord({...record,symbol,timeframe}); return res.json({ok:true,symbol,timeframe,record:saved}); });
 aiRoutes.get('/features/:symbol', async (req,res)=>{ const symbol=String(req.params.symbol||'').toUpperCase(); const records=await featureStore.getFeatureRecords(symbol,req.query?.limit); return res.json({ok:true,symbol,records}); });
@@ -69,5 +74,45 @@ aiRoutes.delete('/analytics/:symbol', async (req,res)=>{
   const warnings=result?.implemented?[]:['Analytics clear operation not implemented; returning safe success.'];
   return res.json({ok:true,symbol,deleted:result?.deleted||0,warnings});
 });
+
+
+
+aiRoutes.post('/ml/datasets/create', async (req,res)=>{
+  try {
+    const result=await datasetBuilderService.createDataset(req.body||{});
+    if(!result.ok) return res.status(400).json({ok:false,errors:result.errors||['Dataset build failed'],warnings:result.warnings||[]});
+    return res.json({ok:true,datasetId:result.datasetId,metadata:result.metadata,warnings:result.warnings||[]});
+  } catch(err){ return res.status(500).json({ok:false,error:'Failed to create dataset',warnings:[String(err.message||err)]}); }
+});
+
+aiRoutes.get('/ml/datasets/:datasetId', async (req,res)=>{
+  const dataset=datasetBuilderService.inspectDataset(req.params.datasetId);
+  if(!dataset) return res.status(404).json({ok:false,error:'Dataset not found',warnings:[]});
+  return res.json({ok:true,dataset,warnings:dataset.metadata?.warnings||[]});
+});
+
+aiRoutes.post('/ml/datasets/:datasetId/split', async (req,res)=>{
+  const dataset=datasetBuilderService.getDatasetById(req.params.datasetId);
+  if(!dataset) return res.status(404).json({ok:false,error:'Dataset not found',warnings:[]});
+  const split=datasetSplitService.split(dataset,req.body||{});
+  if(!split.ok) return res.status(400).json({ok:false,errors:split.errors||['Split failed'],warnings:split.warnings||[]});
+  return res.json({ok:true,summary:split.summary,generatedAt:split.generatedAt,warnings:split.warnings||[]});
+});
+
+aiRoutes.post('/ml/training/start', async (req,res)=>{
+  try {
+    const result=await trainingPipelineService.startJob(req.body||{});
+    return res.json({ok:true,jobId:result.jobId,status:result.status,warnings:result.warnings||[]});
+  } catch(err){ return res.status(500).json({ok:false,error:'Failed to start training job',warnings:[String(err.message||err)]}); }
+});
+
+aiRoutes.get('/ml/training/status/:jobId', async (req,res)=>{
+  const job=trainingPipelineService.getJobStatus(req.params.jobId);
+  if(!job) return res.status(404).json({ok:false,error:'Training job not found',warnings:[]});
+  return res.json({ok:true,job,warnings:job.warnings||[]});
+});
+
+aiRoutes.get('/ml/models', async (_req,res)=>{ const models=modelRegistryService.list(); return res.json({ok:true,models,warnings:models.length?[]:['No registered models found.']}); });
+aiRoutes.get('/ml/models/:modelId', async (req,res)=>{ const model=modelRegistryService.get(req.params.modelId); if(!model) return res.status(404).json({ok:false,error:'Model not found',warnings:[]}); return res.json({ok:true,model,warnings:[]}); });
 
 export default aiRoutes;
