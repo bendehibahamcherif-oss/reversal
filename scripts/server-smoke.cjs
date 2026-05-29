@@ -180,7 +180,7 @@ async function run() {
         throw new Error(`${check.method} ${check.path} did not return JSON`);
       }
 
-      if (!response.ok) {
+      if (!response.ok && !check._previewNoDisclaimer) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -216,6 +216,10 @@ async function run() {
         if (!createdRuleSetId) throw new Error('POST /api/rules/set/SPY missing created rule set id');
         checks.push({ method: 'POST', path: `/api/rules/evaluate/SPY/${createdRuleSetId}` });
         checks.push({ method: 'POST', path: `/api/rules/convert/SPY/${createdRuleSetId}` });
+        // Phase 8C: validate + preview routes
+        checks.push({ method: 'POST', path: `/api/rules/validate/${createdRuleSetId}`, body: {}, _validateCheck: true });
+        checks.push({ method: 'POST', path: `/api/rules/preview/SPY/${createdRuleSetId}`, body: {}, _previewNoDisclaimer: true });
+        checks.push({ method: 'POST', path: `/api/rules/preview/SPY/${createdRuleSetId}`, body: { disclaimerAccepted: true }, _previewWithDisclaimer: true });
       }
 
       // Alert engine: validate structure + inject CRUD checks for first price_above alert
@@ -275,6 +279,25 @@ async function run() {
         if (!provider.configured || !Array.isArray(provider.maskedFields) || provider.maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
           throw new Error('GET provider should only return masked credential metadata');
         }
+      }
+
+      if (check._validateCheck) {
+        if (!parsed.ok) throw new Error(`POST ${check.path} returned ok:false`);
+        if (typeof parsed.valid !== 'boolean') throw new Error(`validate response missing valid boolean`);
+        if (!parsed.errors || !parsed.warnings) throw new Error(`validate response missing errors/warnings maps`);
+        if (!parsed.disclaimer) throw new Error(`validate response missing disclaimer`);
+      }
+
+      if (check._previewNoDisclaimer) {
+        if (response.status !== 403) throw new Error(`preview without disclaimer must return 403, got ${response.status}`);
+        if (!parsed.disclaimer) throw new Error(`403 preview response missing disclaimer`);
+      }
+
+      if (check._previewWithDisclaimer) {
+        if (!parsed.ok) throw new Error(`POST ${check.path} (with disclaimer) returned ok:false`);
+        if (!parsed.preview) throw new Error(`preview response missing preview:true`);
+        if (!parsed.result) throw new Error(`preview response missing result`);
+        if (!parsed.disclaimer) throw new Error(`preview response missing disclaimer`);
       }
 
       if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
