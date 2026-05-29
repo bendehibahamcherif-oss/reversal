@@ -1,6 +1,7 @@
 import marketStreamRoutes from '../api/marketStreamRoutes.js';
 import { marketStreamEngine } from '../marketStream/MarketStreamEngine.js';
 import { alertEngine } from '../alerts/AlertEngine.js';
+import { cvdEngine } from '../charting/cvdEngine.js';
 import replayRoutes from '../api/replayRoutes.js';
 import replayLegacyRoutes from '../api/replaySessionRoutes.js';
 import replaySessionRoutes from '../api/replaySessionControlRoutes.js';
@@ -58,6 +59,9 @@ export function applyRuntimeIntegration(app) {
 
   // Start alert evaluation engine
   alertEngine.start();
+
+  // Start CVD engine WebSocket push loop
+  cvdEngine.start();
 
   app.use('/api/replay', replayRoutes);
   app.use('/api/replay-legacy', replayLegacyRoutes);
