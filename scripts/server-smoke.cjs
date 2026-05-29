@@ -60,6 +60,21 @@ const checks = [
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
   { method: 'GET', path: '/api/feeds/candle/SPY?timeframe=1m' },
+  // ── Alert engine ────────────────────────────────────────────────────────────
+  { method: 'GET',  path: '/api/alerts' },
+  { method: 'GET',  path: '/api/alerts/diagnostics' },
+  { method: 'GET',  path: '/api/alerts/history' },
+  // Create one alert of each required type (threshold=10000 so they never fire in smoke)
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'price_above',          threshold: 10000, cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'rsi_below',             threshold: 30,    cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'ema_bullish_cross',                       cooldownMode: 'always' } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'vwap_cross_up',                           cooldownMode: 'once' } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'poc_touch',                               cooldownMode: 'cooldown_minutes', cooldownMinutes: 30 } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'vah_break',                               cooldownMode: 'cooldown_minutes', cooldownMinutes: 30 } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'val_break',                               cooldownMode: 'cooldown_minutes', cooldownMinutes: 30 } },
+  { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'volume_spike',          threshold: 3.0,   cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
+  { method: 'GET',  path: '/api/alerts?symbol=SPY' },
+  // ── Chart ────────────────────────────────────────────────────────────────────
   { method: 'GET', path: '/api/chart/candles/SPY?timeframe=1m&limit=50' },
   { method: 'GET', path: '/api/chart/indicators/SPY?timeframe=1m' },
   { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
@@ -196,6 +211,51 @@ async function run() {
         if (!createdRuleSetId) throw new Error('POST /api/rules/set/SPY missing created rule set id');
         checks.push({ method: 'POST', path: `/api/rules/evaluate/SPY/${createdRuleSetId}` });
         checks.push({ method: 'POST', path: `/api/rules/convert/SPY/${createdRuleSetId}` });
+      }
+
+      // Alert engine: validate structure + inject CRUD checks for first price_above alert
+      if (check.method === 'GET' && check.path === '/api/alerts') {
+        if (!parsed.success || !Array.isArray(parsed.alerts)) throw new Error('/api/alerts missing alerts array');
+      }
+
+      if (check.method === 'GET' && check.path === '/api/alerts/diagnostics') {
+        if (!parsed.success || parsed.evalIntervalMs == null) throw new Error('/api/alerts/diagnostics missing evalIntervalMs');
+        if (typeof parsed.activeAlerts !== 'number')          throw new Error('/api/alerts/diagnostics missing activeAlerts');
+      }
+
+      if (check.method === 'GET' && check.path === '/api/alerts/history') {
+        if (!parsed.success || !Array.isArray(parsed.history)) throw new Error('/api/alerts/history missing history array');
+      }
+
+      if (check.method === 'POST' && check.path === '/api/alerts' && parsed?.alert?.type === 'price_above') {
+        const alertId = parsed?.alert?.id || '';
+        if (!alertId) throw new Error('POST /api/alerts missing alert id');
+        if (parsed.alert.symbol !== 'SPY') throw new Error('alert symbol mismatch');
+        // Inject further CRUD checks for this alert
+        checks.push({ method: 'GET',    path: `/api/alerts/${alertId}`,         _alertId: alertId });
+        checks.push({ method: 'PUT',    path: `/api/alerts/${alertId}`,         body: { threshold: 9999 }, _alertId: alertId });
+        checks.push({ method: 'POST',   path: `/api/alerts/${alertId}/disable`, _alertId: alertId });
+        checks.push({ method: 'POST',   path: `/api/alerts/${alertId}/enable`,  _alertId: alertId });
+        checks.push({ method: 'DELETE', path: `/api/alerts/${alertId}`,         _alertId: alertId });
+      }
+
+      if (check._alertId) {
+        if (!parsed.success) throw new Error(`${check.method} ${check.path} returned success:false`);
+        if (check.method === 'GET' && !check.path.endsWith('/disable') && !check.path.endsWith('/enable')) {
+          if (!parsed.alert?.id) throw new Error(`${check.path} missing alert.id`);
+        }
+        if (check.method === 'PUT' && parsed.alert?.threshold !== 9999) {
+          throw new Error('PUT /api/alerts/:id threshold not updated');
+        }
+      }
+
+      if (check.method === 'GET' && check.path === '/api/alerts?symbol=SPY') {
+        if (!parsed.success || !Array.isArray(parsed.alerts)) throw new Error('/api/alerts?symbol=SPY missing alerts array');
+        const types = parsed.alerts.map((a) => a.type);
+        const required = ['price_above', 'rsi_below', 'ema_bullish_cross', 'vwap_cross_up', 'poc_touch', 'vah_break', 'val_break', 'volume_spike'];
+        for (const t of required) {
+          if (!types.includes(t)) throw new Error(`/api/alerts?symbol=SPY missing alert type: ${t}`);
+        }
       }
 
       if (check.method === 'POST' && check.path === '/api/feeds/providers/polygon/credentials') {
