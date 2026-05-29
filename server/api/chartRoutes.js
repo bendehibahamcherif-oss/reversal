@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { chartDataEngine } from '../charting/chartDataEngine.js';
 import { cvdEngine } from '../charting/cvdEngine.js';
+import { footprintEngine } from '../charting/footprintEngine.js';
 
 const chartRoutes = Router();
 
@@ -72,6 +73,58 @@ chartRoutes.get('/cvd/:symbol', async (req, res) => {
         ...candlePayload.warnings,
         ...(cvdPayload.fallback
           ? [`CVD source is "${cvdPayload.source}"; buy/sell pressure is approximated, not from real order flow.`]
+          : []),
+      ],
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/chart/footprint/:symbol
+// Returns per-bar, per-price-level footprint clusters.
+// Query params:
+//   timeframe          (default: 1m)
+//   limit              (default: 50, max: 200)   — fewer bars by default due to payload size
+//   clusterSize        (default: auto-scaled)     — price increment per level
+//   imbalanceThreshold (default: 3.0)             — min ratio to flag imbalance
+chartRoutes.get('/footprint/:symbol', async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || '').toUpperCase();
+    if (!symbol) return res.status(400).json({ success: false, error: 'symbol required' });
+
+    const timeframe          = String(req.query.timeframe || '1m');
+    const limit              = Math.min(200, Math.max(5, parseInt(req.query.limit, 10) || 50));
+    const clusterSize        = req.query.clusterSize ? parseFloat(req.query.clusterSize) : null;
+    const imbalanceThreshold = Math.max(1.1, parseFloat(req.query.imbalanceThreshold) || 3.0);
+
+    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit);
+    const candles       = candlePayload.candles || [];
+
+    // Cache for WebSocket push
+    footprintEngine.setLatestCandles(symbol, candles, candlePayload.source);
+
+    const fp = footprintEngine.compute(candles, candlePayload.source, {
+      clusterSize,
+      imbalanceThreshold,
+    });
+
+    return res.json({
+      success:            true,
+      symbol,
+      timeframe,
+      limit,
+      clusterSize:        fp.clusterSize,
+      imbalanceThreshold: fp.imbalanceThreshold,
+      source:             fp.source,
+      fallback:           fp.fallback,
+      imbalancesDisabled: fp.imbalancesDisabled,
+      bars:               fp.bars,
+      candleSource:       candlePayload.source,
+      warnings: [
+        ...candlePayload.warnings,
+        ...(fp.imbalancesDisabled
+          ? ['Imbalance and absorption markers are disabled: data source is synthetic OHLCV approximation, not real bid/ask order flow.']
           : []),
       ],
     });
