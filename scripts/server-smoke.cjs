@@ -31,6 +31,9 @@ const checks = [
   { method: 'GET', path: '/api/analytics/latest/SPY' },
   { method: 'POST', path: '/api/backtest/run/SPY' },
   { method: 'GET', path: '/api/backtest/results/SPY' },
+  { method: 'GET', path: '/api/backtest/runs/SPY' },
+  { method: 'POST', path: '/api/backtest/walk-forward/SPY', body: { timeframe: '1m', options: { trainRatio: 0.6, testRatio: 0.2, stepRatio: 0.1, minTestCandles: 5 } } },
+  { method: 'GET', path: '/api/backtest/walk-forward/SPY' },
   { method: 'POST', path: '/api/validation/strategy/SPY' },
   { method: 'GET', path: '/api/validation/results/SPY' },
   { method: 'POST', path: '/api/strategy-lab/save/SPY', body: { name: 'Smoke Manual Save', type: 'manual', direction: 'long', timeframe: '1h', entryLogic: 'Breakout above VWAP', exitLogic: 'Trailing stop below EMA', riskRules: { maxRiskPct: 1 }, notes: 'Smoke check manual save route', tags: ['smoke', 'manual'] } },
@@ -151,7 +154,7 @@ async function run() {
   }
 
   const server = spawn(process.execPath, ['server/index.cjs'], {
-    env: { ...process.env, PORT: String(PORT), MONGO_URI: process.env.MONGO_URI || '' },
+    env: { ...process.env, PORT: String(PORT), MONGO_URI: process.env.MONGO_URI || '', RATE_LIMIT_MAX: '1000' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -161,6 +164,7 @@ async function run() {
   try {
     await waitForReady();
     let createdRuleSetId = '';
+    let backtestRunId = '';
     for (const check of checks) {
       let path = check.path;
       if (path.includes(':id')) {
@@ -174,6 +178,16 @@ async function run() {
 
       const text = await response.text();
       let parsed;
+
+      // HTML export returns text/html — skip JSON parse + skip JSON-only checks
+      if (check._exportCheck) {
+        if (!response.ok) throw new Error(`${path} HTML export failed with ${response.status}`);
+        if (!text.includes('<!DOCTYPE html') && !text.includes('<html')) throw new Error(`${path} HTML export missing DOCTYPE`);
+        if (!text.includes('noLookaheadVerified') && !text.includes('Backtest Report')) throw new Error(`${path} HTML export missing report content`);
+        console.log(`OK ${check.method} ${path}`);
+        continue;
+      }
+
       try {
         parsed = JSON.parse(text);
       } catch {
@@ -186,6 +200,59 @@ async function run() {
 
       if (check.path === '/api/quant/pipeline/SPY' && !Array.isArray(parsed.qualityScores)) {
         throw new Error('POST /api/quant/pipeline/SPY missing qualityScores array');
+      }
+
+      // ── Phase 8D: backtest engine hardening checks ─────────────────────────
+      if (check.method === 'POST' && check.path === '/api/backtest/run/SPY') {
+        backtestRunId = parsed?.result?.id || '';
+        if (!parsed.ok) throw new Error('POST /api/backtest/run/SPY returned ok:false');
+        const r = parsed.result;
+        if (!r) throw new Error('POST /api/backtest/run/SPY missing result');
+        if (typeof r.noLookaheadVerified !== 'boolean') throw new Error('backtest result missing noLookaheadVerified');
+        if (r.noLookaheadVerified !== true) throw new Error('noLookaheadVerified must be true for standard run');
+        if (!r.config || typeof r.config.stopLossPercent !== 'number') throw new Error('backtest result missing config.stopLossPercent');
+        if (backtestRunId) {
+          checks.push({ method: 'GET',  path: `/api/backtest/runs/SPY/${backtestRunId}`, _btRunCheck: true });
+          checks.push({ method: 'POST', path: `/api/backtest/monte-carlo/SPY/${backtestRunId}`, body: { iterations: 200 }, _mcCheck: true });
+          checks.push({ method: 'GET',  path: `/api/backtest/monte-carlo/SPY/${backtestRunId}`, _mcListCheck: true });
+          checks.push({ method: 'GET',  path: `/api/backtest/export/SPY/${backtestRunId}`, _exportCheck: true });
+        }
+      }
+
+      if (check.method === 'GET' && check.path === '/api/backtest/runs/SPY') {
+        if (!parsed.ok || !Array.isArray(parsed.runs)) throw new Error('/api/backtest/runs/SPY missing runs array');
+      }
+
+      if (check.method === 'POST' && check.path === '/api/backtest/walk-forward/SPY') {
+        if (!parsed.ok) throw new Error('POST /api/backtest/walk-forward/SPY returned ok:false');
+        const r = parsed.result;
+        if (!r || !Array.isArray(r.windows)) throw new Error('walk-forward result missing windows array');
+        if (!r.aggregateMetrics || typeof r.aggregateMetrics.numberOfTrades !== 'number') throw new Error('walk-forward missing aggregateMetrics.numberOfTrades');
+      }
+
+      if (check.method === 'GET' && check.path === '/api/backtest/walk-forward/SPY') {
+        if (!parsed.ok || !Array.isArray(parsed.runs)) throw new Error('GET /api/backtest/walk-forward/SPY missing runs array');
+      }
+
+      if (check._btRunCheck) {
+        if (!parsed.ok || !parsed.run) throw new Error(`${check.path} missing run`);
+        if (typeof parsed.run.noLookaheadVerified !== 'boolean') throw new Error(`${check.path} run missing noLookaheadVerified`);
+      }
+
+      if (check._mcCheck) {
+        if (!parsed.ok || !parsed.result) throw new Error(`${check.path} monte-carlo missing result`);
+        const mc = parsed.result;
+        if (!mc.summary || mc.summary.iterations == null) throw new Error('monte-carlo missing summary.iterations');
+        if (!mc.summary.totalPnL || mc.summary.totalPnL.median == null) throw new Error('monte-carlo summary missing totalPnL.median');
+      }
+
+      if (check._mcListCheck) {
+        if (!parsed.ok || !Array.isArray(parsed.runs)) throw new Error(`${check.path} missing runs array`);
+      }
+
+      if (check._exportCheck) {
+        // HTML export returns text/html — skip JSON parse error for this check
+        if (!response.ok) throw new Error(`${check.path} export failed with ${response.status}`);
       }
 
 

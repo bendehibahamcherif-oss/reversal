@@ -2,7 +2,7 @@ const requests = new Map();
 
 export function rateLimiter({
   windowMs = 60000,
-  max = 100,
+  max = Number(process.env.RATE_LIMIT_MAX) || 100,
 } = {}) {
   return (req, res, next) => {
     const key = req.ip;
