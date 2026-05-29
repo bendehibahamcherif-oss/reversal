@@ -91,6 +91,10 @@ const checks = [
   // ── CVD ─────────────────────────────────────────────────────────────────────
   { method: 'GET', path: '/api/chart/cvd/SPY?timeframe=1m&limit=50', _cvdCheck: true },
   { method: 'GET', path: '/api/chart/cvd/BTC-USD?timeframe=1m&limit=50', _cvdCheck: true },
+  // ── Footprint ────────────────────────────────────────────────────────────────
+  { method: 'GET', path: '/api/chart/footprint/SPY?timeframe=1m&limit=20', _fpCheck: true },
+  { method: 'GET', path: '/api/chart/footprint/SPY?timeframe=1m&limit=10&clusterSize=0.25&imbalanceThreshold=3', _fpCheck: true },
+  { method: 'GET', path: '/api/chart/footprint/BTC-USD?timeframe=1m&limit=10', _fpCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -311,6 +315,50 @@ async function run() {
         // When using OHLCV synthetic fallback, fallback must be true
         if (parsed.source === 'ohlcv_synthetic' && !parsed.fallback) {
           throw new Error(`${check.path} ohlcv_synthetic source must set fallback:true`);
+        }
+      }
+
+      // ── Footprint checks ─────────────────────────────────────────────────────
+      if (check._fpCheck) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (!Array.isArray(parsed.bars)) throw new Error(`${check.path} missing bars array`);
+        if (typeof parsed.fallback !== 'boolean') throw new Error(`${check.path} missing fallback boolean`);
+        if (typeof parsed.imbalancesDisabled !== 'boolean') throw new Error(`${check.path} missing imbalancesDisabled boolean`);
+        if (typeof parsed.clusterSize !== 'number' || parsed.clusterSize <= 0) throw new Error(`${check.path} missing valid clusterSize`);
+        if (typeof parsed.imbalanceThreshold !== 'number') throw new Error(`${check.path} missing imbalanceThreshold`);
+        // Synthetic source must disable imbalances
+        if (parsed.source === 'ohlcv_synthetic' && !parsed.imbalancesDisabled) {
+          throw new Error(`${check.path} synthetic source must set imbalancesDisabled:true`);
+        }
+        // Synthetic source must set fallback:true
+        if (parsed.source === 'ohlcv_synthetic' && !parsed.fallback) {
+          throw new Error(`${check.path} synthetic source must set fallback:true`);
+        }
+        // Validate bar structure
+        if (parsed.bars.length > 0) {
+          const bar = parsed.bars[0];
+          if (!Array.isArray(bar.levels)) throw new Error(`${check.path} bar missing levels array`);
+          if (typeof bar.delta !== 'number') throw new Error(`${check.path} bar missing delta`);
+          if (typeof bar.maxLevelVol !== 'number') throw new Error(`${check.path} bar missing maxLevelVol`);
+          if (bar.poc == null) throw new Error(`${check.path} bar missing poc`);
+          // Validate level structure
+          if (bar.levels.length > 0) {
+            const lvl = bar.levels[0];
+            if (typeof lvl.price !== 'number') throw new Error(`${check.path} level missing price`);
+            if (typeof lvl.bidVol !== 'number') throw new Error(`${check.path} level missing bidVol`);
+            if (typeof lvl.askVol !== 'number') throw new Error(`${check.path} level missing askVol`);
+            if (typeof lvl.totalVol !== 'number') throw new Error(`${check.path} level missing totalVol`);
+            // Imbalance fields must be null when imbalancesDisabled
+            if (parsed.imbalancesDisabled && lvl.imbalance !== null) {
+              throw new Error(`${check.path} level imbalance must be null when imbalancesDisabled`);
+            }
+          }
+        }
+        // Warnings must mention synthetic mode when fallback active
+        if (parsed.fallback && parsed.imbalancesDisabled) {
+          const hasImbalanceWarning = Array.isArray(parsed.warnings) &&
+            parsed.warnings.some((w) => String(w).toLowerCase().includes('imbalance'));
+          if (!hasImbalanceWarning) throw new Error(`${check.path} missing imbalance disabled warning`);
         }
       }
 
