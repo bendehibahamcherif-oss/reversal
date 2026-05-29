@@ -21,6 +21,7 @@ import paperTradingRoutes from '../api/paperTradingRoutes.js';
 import feedRoutes from '../api/feedRoutes.js';
 import chartRoutes from '../api/chartRoutes.js';
 import alertRoutes from '../api/alertRoutes.js';
+import volumeProfileRoutes from '../api/volumeProfileRoutes.js';
 import aiRoutes from '../api/aiRoutes.js';
 import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
 
@@ -80,6 +81,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/market', feedRoutes);
   app.use('/api/chart', chartRoutes);
   app.use('/api/alerts', alertRoutes);
+  app.use('/api/volume-profile', volumeProfileRoutes);
   app.use('/api/ai', aiRoutes);
   app.use('/api/providers', providerCredentialRoutes);
 }

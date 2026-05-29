@@ -64,7 +64,6 @@ const checks = [
   { method: 'GET',  path: '/api/alerts' },
   { method: 'GET',  path: '/api/alerts/diagnostics' },
   { method: 'GET',  path: '/api/alerts/history' },
-  // Create one alert of each required type (threshold=10000 so they never fire in smoke)
   { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'price_above',          threshold: 10000, cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
   { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'rsi_below',             threshold: 30,    cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
   { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'ema_bullish_cross',                       cooldownMode: 'always' } },
@@ -74,6 +73,12 @@ const checks = [
   { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'val_break',                               cooldownMode: 'cooldown_minutes', cooldownMinutes: 30 } },
   { method: 'POST', path: '/api/alerts', body: { symbol: 'SPY', type: 'volume_spike',          threshold: 3.0,   cooldownMode: 'cooldown_minutes', cooldownMinutes: 60 } },
   { method: 'GET',  path: '/api/alerts?symbol=SPY' },
+  // ── Volume Profile ───────────────────────────────────────────────────────────
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=visible_range&bins=50' },
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=daily&bins=50' },
+  { method: 'GET', path: '/api/volume-profile/SPY?mode=session&bins=100' },
+  { method: 'GET', path: '/api/volume-profile/BTC-USD?mode=visible_range&bins=200' },
+  { method: 'GET', path: '/api/volume-profile/EURUSD%3DX?mode=visible_range&bins=50' },
   // ── Chart ────────────────────────────────────────────────────────────────────
   { method: 'GET', path: '/api/chart/candles/SPY?timeframe=1m&limit=50' },
   { method: 'GET', path: '/api/chart/indicators/SPY?timeframe=1m' },
@@ -269,6 +274,24 @@ async function run() {
         const provider = parsed?.provider || {};
         if (!provider.configured || !Array.isArray(provider.maskedFields) || provider.maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
           throw new Error('GET provider should only return masked credential metadata');
+        }
+      }
+
+      if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (!Array.isArray(parsed.profile)) throw new Error(`${check.path} missing profile array`);
+        const binsParam = Number(new URL(`http://x${check.path}`).searchParams.get('bins') || 50);
+        if (parsed.bins !== binsParam) throw new Error(`${check.path} bins mismatch: got ${parsed.bins}`);
+        if (parsed.profile.length > 0 && parsed.poc == null) throw new Error(`${check.path} missing poc`);
+        if (parsed.profile.length > 0 && parsed.vah == null) throw new Error(`${check.path} missing vah`);
+        if (parsed.profile.length > 0 && parsed.val == null) throw new Error(`${check.path} missing val`);
+        if (!Array.isArray(parsed.hvn)) throw new Error(`${check.path} hvn must be array`);
+        if (!Array.isArray(parsed.lvn)) throw new Error(`${check.path} lvn must be array`);
+        if (parsed.profile.length > 0) {
+          const first = parsed.profile[0];
+          if (first.price == null || first.priceLevel == null || first.binLow == null || first.binHigh == null || first.volume == null) {
+            throw new Error(`${check.path} profile item missing required fields (price/priceLevel/binLow/binHigh/volume)`);
+          }
         }
       }
 
