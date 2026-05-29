@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { chartDataEngine } from '../charting/chartDataEngine.js';
+import { cvdEngine } from '../charting/cvdEngine.js';
 
 const chartRoutes = Router();
 
@@ -35,6 +36,48 @@ chartRoutes.get('/payload/:symbol', async (req, res) => {
     Object.assign(indicatorsObj, payload.indicators);
   }
   return res.json({ success: true, ...payload, indicators: indicatorsObj });
+});
+
+// GET /api/chart/cvd/:symbol
+// Returns bar-aligned cumulative delta volume with explicit source tagging.
+// Query params:
+//   timeframe  (default: 1m)
+//   limit      (default: 200, max: 500)
+chartRoutes.get('/cvd/:symbol', async (req, res) => {
+  try {
+    const symbol    = String(req.params.symbol || '').toUpperCase();
+    if (!symbol) return res.status(400).json({ success: false, error: 'symbol required' });
+
+    const timeframe = String(req.query.timeframe || '1m');
+    const limit     = Math.min(500, Math.max(10, parseInt(req.query.limit, 10) || 200));
+
+    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit);
+    const candles       = candlePayload.candles || [];
+
+    const cvdPayload = cvdEngine.buildCVDPayload(symbol, candles, candlePayload.source);
+
+    return res.json({
+      success:              true,
+      symbol,
+      timeframe,
+      limit,
+      source:               cvdPayload.source,
+      sourceClassification: cvdPayload.sourceClassification,
+      fallback:             cvdPayload.fallback,
+      sessionResets:        cvdPayload.sessionResets,
+      liveState:            cvdPayload.liveState,
+      bars:                 cvdPayload.bars,
+      candleSource:         candlePayload.source,
+      warnings: [
+        ...candlePayload.warnings,
+        ...(cvdPayload.fallback
+          ? [`CVD source is "${cvdPayload.source}"; buy/sell pressure is approximated, not from real order flow.`]
+          : []),
+      ],
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default chartRoutes;

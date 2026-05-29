@@ -12,6 +12,7 @@ import {
 } from './db.js';
 
 import { connectDatabase } from './database/db.js';
+import { setIo } from './server/websocket/wsEmitter.js';
 
 import { applyProductionIntegration }
   from './bootstrap/productionIntegration.js';
@@ -132,6 +133,9 @@ const io = new Server(server, {
     ],
   },
 });
+
+// Register io with the wsEmitter singleton so interior modules can push events
+setIo(io);
 
 app.get('/', (req, res) => {
   res.json({

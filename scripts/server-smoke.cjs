@@ -88,6 +88,9 @@ const checks = [
   { method: 'GET', path: '/api/chart/overlays/SPY?timeframe=1m' },
   { method: 'GET', path: '/api/chart/orderflow/SPY' },
   { method: 'GET', path: '/api/chart/payload/SPY?timeframe=1m&limit=50' },
+  // ── CVD ─────────────────────────────────────────────────────────────────────
+  { method: 'GET', path: '/api/chart/cvd/SPY?timeframe=1m&limit=50', _cvdCheck: true },
+  { method: 'GET', path: '/api/chart/cvd/BTC-USD?timeframe=1m&limit=50', _cvdCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -290,6 +293,27 @@ async function run() {
       }
 
       // Alert engine: validate structure + inject CRUD checks for first price_above alert
+      // ── CVD checks ──────────────────────────────────────────────────────────
+      if (check._cvdCheck) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (!Array.isArray(parsed.bars)) throw new Error(`${check.path} missing bars array`);
+        if (typeof parsed.fallback !== 'boolean') throw new Error(`${check.path} missing fallback boolean`);
+        if (!parsed.source) throw new Error(`${check.path} missing source`);
+        if (!parsed.sourceClassification) throw new Error(`${check.path} missing sourceClassification`);
+        if (typeof parsed.sessionResets !== 'number') throw new Error(`${check.path} missing sessionResets`);
+        if (!parsed.liveState || typeof parsed.liveState.cumDelta !== 'number') throw new Error(`${check.path} missing liveState.cumDelta`);
+        if (parsed.bars.length > 0) {
+          const bar = parsed.bars[0];
+          if (bar.delta == null || bar.cumDelta == null || bar.source == null || typeof bar.fallback !== 'boolean') {
+            throw new Error(`${check.path} bar missing required fields (delta/cumDelta/source/fallback)`);
+          }
+        }
+        // When using OHLCV synthetic fallback, fallback must be true
+        if (parsed.source === 'ohlcv_synthetic' && !parsed.fallback) {
+          throw new Error(`${check.path} ohlcv_synthetic source must set fallback:true`);
+        }
+      }
+
       if (check.method === 'GET' && check.path === '/api/alerts') {
         if (!parsed.success || !Array.isArray(parsed.alerts)) throw new Error('/api/alerts missing alerts array');
       }
