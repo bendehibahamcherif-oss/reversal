@@ -1,5 +1,6 @@
 import marketStreamRoutes from '../api/marketStreamRoutes.js';
 import { marketStreamEngine } from '../marketStream/MarketStreamEngine.js';
+import { alertEngine } from '../alerts/AlertEngine.js';
 import replayRoutes from '../api/replayRoutes.js';
 import replayLegacyRoutes from '../api/replaySessionRoutes.js';
 import replaySessionRoutes from '../api/replaySessionControlRoutes.js';
@@ -19,6 +20,7 @@ import reversalRoutes from '../api/reversalRoutes.js';
 import paperTradingRoutes from '../api/paperTradingRoutes.js';
 import feedRoutes from '../api/feedRoutes.js';
 import chartRoutes from '../api/chartRoutes.js';
+import alertRoutes from '../api/alertRoutes.js';
 import volumeProfileRoutes from '../api/volumeProfileRoutes.js';
 import aiRoutes from '../api/aiRoutes.js';
 import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
@@ -54,6 +56,9 @@ export function applyRuntimeIntegration(app) {
     console.warn('[runtimeIntegration] MarketStreamEngine init failed:', e?.message),
   );
 
+  // Start alert evaluation engine
+  alertEngine.start();
+
   app.use('/api/replay', replayRoutes);
   app.use('/api/replay-legacy', replayLegacyRoutes);
   app.use('/api/replay-session', replaySessionRoutes);
@@ -75,6 +80,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/feed', feedRoutes);
   app.use('/api/market', feedRoutes);
   app.use('/api/chart', chartRoutes);
+  app.use('/api/alerts', alertRoutes);
   app.use('/api/volume-profile', volumeProfileRoutes);
   app.use('/api/ai', aiRoutes);
   app.use('/api/providers', providerCredentialRoutes);
