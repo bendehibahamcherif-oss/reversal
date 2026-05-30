@@ -3,8 +3,10 @@ import layoutsRoutes from '../routes/layouts.js';
 import executionsRoutes from '../routes/executions.js';
 
 import { rateLimiter } from '../security/rateLimiter.js';
+import { requestMiddleware } from '../server/observability/requestMiddleware.js';
 
 export function applyProductionIntegration(app) {
+  app.use(requestMiddleware);
   app.use(rateLimiter());
 
   app.use('/watchlists', watchlistsRoutes);
