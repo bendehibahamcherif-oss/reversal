@@ -223,6 +223,22 @@ const checks = [
   { method: 'POST', path: '/api/institutional/scenarios/stress-pack/no_such_pack',
     body: { positions: [{ symbol: 'SPY', quantity: 1, currentPrice: 500, side: 'long' }] },
     _instBadPack: true },
+  // ── Phase 15: Professional Platform Hardening ─────────────────────────────────
+  { method: 'GET',  path: '/api/observability/health',           _obsHealth: true },
+  { method: 'GET',  path: '/api/observability/metrics',          _obsMetrics: true },
+  { method: 'POST', path: '/api/observability/metrics/reset',    _obsMetricsReset: true },
+  { method: 'GET',  path: '/api/observability/market-session',   _obsMarketSession: true },
+  { method: 'GET',  path: '/api/observability/websocket-stats',  _obsWsStats: true },
+  { method: 'POST', path: '/api/observability/failover-drill',   _obsFailoverDrill: true },
+  { method: 'GET',  path: '/api/observability/rate-limit-status', _obsRateLimit: true },
+  // Market session guard: paper mode must always pass (never blocked)
+  { method: 'POST', path: '/api/execution/orders',
+    body: { symbol: 'SPY', side: 'buy', quantity: 1, type: 'market', mode: 'paper' },
+    _obsSessionGuardPaper: true },
+  // Market session guard: live mode must be blocked outside hours (422 or rejected by risk gate)
+  { method: 'POST', path: '/api/execution/orders',
+    body: { symbol: 'SPY', side: 'buy', quantity: 1, type: 'market', mode: 'live' },
+    _obsSessionGuardLive: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -279,7 +295,7 @@ async function run() {
   }
 
   const server = spawn(process.execPath, ['server/index.cjs'], {
-    env: { ...process.env, PORT: String(PORT), MONGO_URI: process.env.MONGO_URI || '', RATE_LIMIT_MAX: '1000' },
+    env: { ...process.env, PORT: String(PORT), MONGO_URI: process.env.MONGO_URI || '', RATE_LIMIT_MAX: '1000', RATE_LIMIT_STRICT_MAX: '500' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -322,7 +338,7 @@ async function run() {
       if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
           && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
           && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled
-          && !check._omsNotFound && !check._instBadPack) {
+          && !check._omsNotFound && !check._instBadPack && !check._obsSessionGuardLive && !check._obsSessionGuardPaper) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -1071,6 +1087,92 @@ async function run() {
       if (check._instBadPack) {
         if (response.status !== 400) throw new Error(`${check.path} unknown packId must return 400, got ${response.status}`);
         if (!parsed.error) throw new Error(`${check.path} error message missing`);
+      }
+
+      // ── Phase 15: Observability / Platform Hardening checks ──────────────────
+      if (check._obsHealth) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.uptime?.secs !== 'number')        throw new Error(`${check.path} missing uptime.secs`);
+        if (!parsed.memory?.heapUsedMB)                    throw new Error(`${check.path} missing memory.heapUsedMB`);
+        if (!parsed.marketSession)                         throw new Error(`${check.path} missing marketSession`);
+        if (parsed.marketSession.isOpen == null)           throw new Error(`${check.path} marketSession.isOpen missing`);
+        if (!parsed.marketSession.session)                 throw new Error(`${check.path} marketSession.session missing`);
+        if (!parsed.websocket)                             throw new Error(`${check.path} missing websocket`);
+        if (parsed.websocket.connectedClients == null)     throw new Error(`${check.path} websocket.connectedClients missing`);
+        if (!parsed.requests || parsed.requests.total == null) throw new Error(`${check.path} missing requests.total`);
+        if (!parsed.rateLimit || parsed.rateLimit.max == null)  throw new Error(`${check.path} missing rateLimit.max`);
+        // Verify X-Trace-Id header is present
+        if (!response.headers.get('x-trace-id')) throw new Error(`${check.path} X-Trace-Id header missing`);
+        // Verify X-RateLimit-Limit header is present
+        if (!response.headers.get('x-ratelimit-limit')) throw new Error(`${check.path} X-RateLimit-Limit header missing`);
+      }
+
+      if (check._obsMetrics) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.totalRequests !== 'number') throw new Error(`${check.path} missing totalRequests`);
+        if (typeof parsed.totalErrors !== 'number')   throw new Error(`${check.path} missing totalErrors`);
+        if (!Array.isArray(parsed.routes))            throw new Error(`${check.path} missing routes array`);
+        if (typeof parsed.uptimeSecs !== 'number')    throw new Error(`${check.path} missing uptimeSecs`);
+        if (parsed.totalRequests === 0) throw new Error(`${check.path} totalRequests must be > 0 after prior smoke requests`);
+      }
+
+      if (check._obsMetricsReset) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+      }
+
+      if (check._obsMarketSession) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.isOpen == null)    throw new Error(`${check.path} missing isOpen`);
+        if (!parsed.session)          throw new Error(`${check.path} missing session`);
+        if (!parsed.etTime)           throw new Error(`${check.path} missing etTime`);
+        if (!parsed.dayName)          throw new Error(`${check.path} missing dayName`);
+        if (parsed.overrideActive == null) throw new Error(`${check.path} missing overrideActive`);
+        const validSessions = ['regular', 'pre-market', 'after-hours', 'closed', 'weekend'];
+        if (!validSessions.includes(parsed.session)) throw new Error(`${check.path} invalid session: ${parsed.session}`);
+      }
+
+      if (check._obsWsStats) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.connectedClients == null)  throw new Error(`${check.path} missing connectedClients`);
+        if (!parsed.adapterType)              throw new Error(`${check.path} missing adapterType`);
+        if (!parsed.scalingNote)              throw new Error(`${check.path} missing scalingNote`);
+        if (!Array.isArray(parsed.upgradeSteps)) throw new Error(`${check.path} missing upgradeSteps array`);
+        if (parsed.upgradeSteps.length === 0) throw new Error(`${check.path} upgradeSteps must be non-empty`);
+      }
+
+      if (check._obsFailoverDrill) {
+        if (!parsed.ok && parsed.drillPass === undefined) throw new Error(`${check.path} missing drillPass field`);
+        if (!Array.isArray(parsed.steps)) throw new Error(`${check.path} missing steps array`);
+        if (parsed.steps.length < 3)      throw new Error(`${check.path} drill must have >= 3 steps`);
+        const step1 = parsed.steps.find((s) => s.step === 1);
+        if (!step1?.ok) throw new Error(`${check.path} drill step 1 (capture provider chain) failed`);
+        if (!Array.isArray(step1.providerOrder)) throw new Error(`${check.path} step 1 missing providerOrder`);
+        const step3 = parsed.steps.find((s) => s.step === 3);
+        if (!step3?.ok) throw new Error(`${check.path} drill step 3 (provider health check) failed`);
+        if (!parsed.timestamp) throw new Error(`${check.path} missing timestamp`);
+        if (typeof parsed.totalMs !== 'number') throw new Error(`${check.path} missing totalMs`);
+      }
+
+      if (check._obsRateLimit) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.globalMax !== 'number') throw new Error(`${check.path} missing globalMax`);
+        if (typeof parsed.strictMax !== 'number') throw new Error(`${check.path} missing strictMax`);
+        if (typeof parsed.windowMs !== 'number')  throw new Error(`${check.path} missing windowMs`);
+        if (parsed.globalMax <= 0) throw new Error(`${check.path} globalMax must be positive`);
+        if (parsed.strictMax  <= 0) throw new Error(`${check.path} strictMax must be positive`);
+      }
+
+      if (check._obsSessionGuardPaper) {
+        // Paper mode is never blocked by the market session guard (only live mode can be).
+        // Risk engine rejections (concentration, kill switch, etc.) are acceptable here.
+        if (!parsed.ok && parsed.error && String(parsed.error).toLowerCase().includes('session')) {
+          throw new Error(`${check.path} paper mode rejected by market session guard (must never happen): ${JSON.stringify(parsed)}`);
+        }
+      }
+
+      if (check._obsSessionGuardLive) {
+        // Live mode must return 422 (either from session guard or risk gate — both are expected blocks)
+        if (response.status !== 422) throw new Error(`${check.path} live order outside hours must return 422, got ${response.status}`);
       }
 
       // ── Phase 13: Multi-Asset Analytics checks ───────────────────────────────

@@ -31,8 +31,15 @@ import executionRoutes from '../api/executionRoutes.js';
 import omsRoutes from '../api/omsRoutes.js';
 import multiAssetRoutes from '../api/multiAssetRoutes.js';
 import institutionalRoutes from '../api/institutionalRoutes.js';
+import obsRoutes from '../api/observabilityRoutes.js';
+import { requestMiddleware } from '../observability/requestMiddleware.js';
+import { marketSessionGuard } from '../observability/marketSession.js';
+import { strictRateLimiter }  from '../../security/rateLimiter.js';
 
 export function applyRuntimeIntegration(app) {
+  // Attach trace/tenant context and record latency metrics for every request
+  app.use(requestMiddleware);
+
   const runtimeHealthResponse = (req, res) => {
     res.json({
       ok: true,
@@ -98,8 +105,9 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/ai', aiRoutes);
   app.use('/api/providers', providerCredentialRoutes);
   app.use('/api/portfolio', portfolioRoutes);
-  app.use('/api/execution', executionRoutes);
-  app.use('/api/oms', omsRoutes);
+  app.use('/api/execution', strictRateLimiter(), executionRoutes);
+  app.use('/api/oms', strictRateLimiter(), omsRoutes);
   app.use('/api/multi-asset', multiAssetRoutes);
-  app.use('/api/institutional', institutionalRoutes);
+  app.use('/api/institutional', strictRateLimiter(), institutionalRoutes);
+  app.use('/api/observability', obsRoutes);
 }
