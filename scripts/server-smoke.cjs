@@ -95,6 +95,13 @@ const checks = [
   { method: 'GET', path: '/api/chart/footprint/SPY?timeframe=1m&limit=20', _fpCheck: true },
   { method: 'GET', path: '/api/chart/footprint/SPY?timeframe=1m&limit=10&clusterSize=0.25&imbalanceThreshold=3', _fpCheck: true },
   { method: 'GET', path: '/api/chart/footprint/BTC-USD?timeframe=1m&limit=10', _fpCheck: true },
+  // ── Portfolio ────────────────────────────────────────────────────────────────
+  { method: 'GET',  path: '/api/portfolio/positions?mode=paper', _portfolioCheck: true },
+  { method: 'GET',  path: '/api/portfolio/summary?mode=paper',   _portfolioCheck: true },
+  { method: 'GET',  path: '/api/portfolio/drawdown?mode=paper',  _portfolioCheck: true },
+  { method: 'GET',  path: '/api/portfolio/var?mode=paper&confidence=0.95&horizon=1', _portfolioVarCheck: true },
+  { method: 'POST', path: '/api/portfolio/stress-test?mode=paper', body: { scenarios: [{ name: 'Market Crash -10%', shocks: { '*': -0.10 } }, { name: 'Tech Rally +5%', shocks: { SPY: 0.05 } }] }, _portfolioStressCheck: true },
+  { method: 'GET',  path: '/api/portfolio/summary?mode=live', _portfolioLiveCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -201,7 +208,7 @@ async function run() {
         throw new Error(`${check.method} ${check.path} did not return JSON`);
       }
 
-      if (!response.ok && !check._previewNoDisclaimer) {
+      if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -437,6 +444,39 @@ async function run() {
         if (!parsed.preview) throw new Error(`preview response missing preview:true`);
         if (!parsed.result) throw new Error(`preview response missing result`);
         if (!parsed.disclaimer) throw new Error(`preview response missing disclaimer`);
+      }
+
+      // ── Portfolio checks ─────────────────────────────────────────────────────
+      if (check._portfolioCheck) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} missing mode:paper`);
+        if (parsed.modeBadge !== 'PAPER') throw new Error(`${check.path} missing modeBadge:PAPER`);
+      }
+
+      if (check._portfolioVarCheck) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} missing mode:paper`);
+        if (typeof parsed.var !== 'number') throw new Error(`${check.path} missing var number`);
+        if (typeof parsed.confidence !== 'number') throw new Error(`${check.path} missing confidence`);
+        if (typeof parsed.horizon !== 'number') throw new Error(`${check.path} missing horizon`);
+        if (parsed.method !== 'parametric_normal') throw new Error(`${check.path} missing method:parametric_normal`);
+      }
+
+      if (check._portfolioStressCheck) {
+        if (!parsed.success) throw new Error(`${check.path} returned success:false`);
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} missing mode:paper`);
+        if (!Array.isArray(parsed.scenarios)) throw new Error(`${check.path} missing scenarios array`);
+        if (parsed.scenarios.length !== 2) throw new Error(`${check.path} expected 2 scenario results`);
+        for (const s of parsed.scenarios) {
+          if (!s.name) throw new Error(`${check.path} scenario missing name`);
+          if (typeof s.pnlImpact !== 'number') throw new Error(`${check.path} scenario missing pnlImpact`);
+          if (!Array.isArray(s.details)) throw new Error(`${check.path} scenario missing details array`);
+        }
+      }
+
+      if (check._portfolioLiveCheck) {
+        if (response.status !== 503) throw new Error(`${check.path} live mode must return 503, got ${response.status}`);
+        if (!parsed.error) throw new Error(`${check.path} live mode 503 missing error message`);
       }
 
       if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
