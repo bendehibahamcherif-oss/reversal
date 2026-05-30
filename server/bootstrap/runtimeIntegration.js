@@ -30,6 +30,7 @@ import portfolioRoutes from '../api/portfolioRoutes.js';
 import executionRoutes from '../api/executionRoutes.js';
 import omsRoutes from '../api/omsRoutes.js';
 import multiAssetRoutes from '../api/multiAssetRoutes.js';
+import institutionalRoutes from '../api/institutionalRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -100,4 +101,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/execution', executionRoutes);
   app.use('/api/oms', omsRoutes);
   app.use('/api/multi-asset', multiAssetRoutes);
+  app.use('/api/institutional', institutionalRoutes);
 }
