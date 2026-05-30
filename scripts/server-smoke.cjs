@@ -143,6 +143,19 @@ const checks = [
   { method: 'GET',  path: '/api/execution/orders' },
   { method: 'GET',  path: '/api/execution/fills' },
   { method: 'GET',  path: '/api/execution/analytics', _execAnalytics: true },
+  // ── Phase 12: OMS ──────────────────────────────────────────────────────────────
+  { method: 'GET',  path: '/api/oms/stats',                _omsStats: true },
+  { method: 'GET',  path: '/api/oms/orders',               _omsOrderList: true },
+  { method: 'GET',  path: '/api/oms/orders/open',          _omsOpenList: true },
+  { method: 'GET',  path: '/api/oms/events' },
+  { method: 'GET',  path: '/api/oms/reconcile/runs' },
+  // Create paper order
+  { method: 'POST', path: '/api/oms/orders', body: { symbol: 'SPY', side: 'buy', quantity: 5, type: 'market', mode: 'paper', strategyId: 'smoke-oms' }, _omsCreate: true },
+  // Idempotent create
+  { method: 'POST', path: '/api/oms/orders', body: { symbol: 'SPY', side: 'sell', quantity: 3, type: 'limit', mode: 'paper', clientOrderId: 'oms-smoke-dedup-001' }, _omsIdemp1: true },
+  { method: 'POST', path: '/api/oms/orders', body: { symbol: 'SPY', side: 'sell', quantity: 9, type: 'limit', mode: 'paper', clientOrderId: 'oms-smoke-dedup-001' }, _omsIdemp2: true },
+  // Reconcile paper mode
+  { method: 'POST', path: '/api/oms/reconcile?mode=paper', _omsRecon: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -241,7 +254,8 @@ async function run() {
 
       if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
           && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
-          && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled) {
+          && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled
+          && !check._omsNotFound) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -709,6 +723,103 @@ async function run() {
         if (!names.includes('Smoke Manual Save') || !names.includes('Smoke Alias Save')) {
           throw new Error('GET /api/strategy-lab/strategies/SPY missing saved smoke strategies');
         }
+      }
+
+      // ── Phase 12: OMS checks ─────────────────────────────────────────────────
+      if (check._omsStats) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.total !== 'number') throw new Error(`${check.path} missing total`);
+        if (typeof parsed.byStatus !== 'object') throw new Error(`${check.path} missing byStatus`);
+        if (typeof parsed.fillRate !== 'number') throw new Error(`${check.path} missing fillRate`);
+      }
+
+      if (check._omsOrderList) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.orders)) throw new Error(`${check.path} missing orders array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} missing count`);
+      }
+
+      if (check._omsOpenList) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.orders)) throw new Error(`${check.path} missing orders array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} missing count`);
+      }
+
+      if (check._omsCreate) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!parsed.order?.orderId) throw new Error(`${check.path} missing order.orderId`);
+        if (!parsed.order?.clientOrderId) throw new Error(`${check.path} missing order.clientOrderId`);
+        if (parsed.order.status !== 'pending') throw new Error(`${check.path} new OMS order must have status pending, got ${parsed.order.status}`);
+        if (parsed.order.symbol !== 'SPY') throw new Error(`${check.path} order symbol mismatch`);
+        // Inject lifecycle smoke: submit → fill → get-with-events
+        const oid = parsed.order.orderId;
+        checks.push({ method: 'POST', path: `/api/oms/orders/${oid}/submit`, body: {}, _omsSubmit: true, _omsOrderId: oid });
+        checks.push({ method: 'POST', path: `/api/oms/orders/${oid}/fill`, body: { fillQuantity: 5, fillPrice: 501.50, commissions: 0.5 }, _omsFill: true, _omsOrderId: oid });
+        checks.push({ method: 'GET',  path: `/api/oms/orders/${oid}/events`, _omsEvents: true });
+        checks.push({ method: 'GET',  path: `/api/oms/orders/${oid}`, _omsSingleGet: true });
+        // Inject a pending order for cancel smoke
+        checks.push({ method: 'POST', path: '/api/oms/orders', body: { symbol: 'QQQ', side: 'buy', quantity: 2, type: 'limit', requestedPrice: 450, mode: 'paper' }, _omsForCancel: true });
+      }
+
+      if (check._omsSubmit) {
+        if (!parsed.ok) throw new Error(`${check.path} submit returned ok:false: ${JSON.stringify(parsed)}`);
+        if (parsed.order?.status !== 'submitted') throw new Error(`${check.path} after submit status must be submitted, got ${parsed.order?.status}`);
+      }
+
+      if (check._omsFill) {
+        if (!parsed.ok) throw new Error(`${check.path} fill returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!['filled', 'partially_filled'].includes(parsed.order?.status)) {
+          throw new Error(`${check.path} after fill status must be filled or partially_filled, got ${parsed.order?.status}`);
+        }
+        if (typeof parsed.order.avgFillPrice !== 'number') throw new Error(`${check.path} missing avgFillPrice after fill`);
+      }
+
+      if (check._omsEvents) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.events)) throw new Error(`${check.path} missing events array`);
+        if (parsed.events.length === 0) throw new Error(`${check.path} events must be non-empty after lifecycle`);
+        const types = parsed.events.map((e) => e.eventType);
+        if (!types.includes('order_created')) throw new Error(`${check.path} missing order_created event`);
+      }
+
+      if (check._omsSingleGet) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.order?.orderId) throw new Error(`${check.path} missing order.orderId`);
+      }
+
+      if (check._omsForCancel) {
+        if (!parsed.ok) throw new Error(`${check.path} for-cancel order failed: ${JSON.stringify(parsed)}`);
+        if (parsed.order?.orderId) {
+          // Submit it so it's in open state, then cancel
+          checks.push({ method: 'POST',   path: `/api/oms/orders/${parsed.order.orderId}/submit`, body: {} });
+          checks.push({ method: 'DELETE', path: `/api/oms/orders/${parsed.order.orderId}`,        _omsCancel: true });
+          // Inject children check
+          checks.push({ method: 'GET',    path: `/api/oms/orders/${parsed.order.orderId}/children` });
+        }
+      }
+
+      if (check._omsCancel) {
+        if (!parsed.ok) throw new Error(`${check.path} cancel returned ok:false: ${JSON.stringify(parsed)}`);
+        if (parsed.order?.status !== 'canceled') throw new Error(`${check.path} canceled order must have status canceled, got ${parsed.order?.status}`);
+      }
+
+      if (check._omsIdemp1) {
+        if (!parsed.ok) throw new Error(`${check.path} first idempotent create failed: ${JSON.stringify(parsed)}`);
+        if (!parsed.order?.orderId) throw new Error(`${check.path} missing orderId`);
+      }
+
+      if (check._omsIdemp2) {
+        if (!parsed.ok) throw new Error(`${check.path} second idempotent create failed: ${JSON.stringify(parsed)}`);
+        if (!parsed.idempotent) throw new Error(`${check.path} repeated clientOrderId must set idempotent:true`);
+        if (parsed.order?.quantity !== 3) throw new Error(`${check.path} idempotent must return original quantity (3), got ${parsed.order?.quantity}`);
+      }
+
+      if (check._omsRecon) {
+        if (!parsed.ok) throw new Error(`${check.path} reconcile returned ok:false: ${JSON.stringify(parsed)}`);
+        if (typeof parsed.ordersChecked !== 'number') throw new Error(`${check.path} missing ordersChecked`);
+        if (typeof parsed.divergences !== 'number') throw new Error(`${check.path} missing divergences`);
+        if (typeof parsed.corrections !== 'number') throw new Error(`${check.path} missing corrections`);
+        if (!parsed.runId) throw new Error(`${check.path} missing runId`);
       }
 
       console.log(`OK ${check.method} ${path}`);
