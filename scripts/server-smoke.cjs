@@ -124,6 +124,25 @@ const checks = [
   { method: 'GET',  path: '/api/ai/ml/feature-importance/nosuchmodel', _mlFI404: true },
   // drift with invalid model id — should 404 gracefully
   { method: 'GET',  path: '/api/ai/ml/drift/nosuchmodel', _mlDrift404: true },
+  // ── Phase 11: Execution Layer ─────────────────────────────────────────────────
+  { method: 'GET',  path: '/api/execution/status',       _execStatusCheck: true },
+  { method: 'GET',  path: '/api/execution/risk' },
+  // Kill switch toggle
+  { method: 'POST', path: '/api/execution/risk/kill-switch', _execKillSwitchOn: true },
+  { method: 'DELETE', path: '/api/execution/risk/kill-switch', _execKillSwitchOff: true },
+  // Place paper order (expect 422 because kill switch may be on — actually off after DELETE)
+  { method: 'POST', path: '/api/execution/orders', body: { symbol: 'SPY', side: 'buy', quantity: 1, type: 'market', mode: 'paper', strategyId: 'smoke-exec' }, _execOrderPlace: true },
+  // Try live order — must be rejected (live gates not set)
+  { method: 'POST', path: '/api/execution/orders', body: { symbol: 'SPY', side: 'buy', quantity: 1, type: 'market', mode: 'live' }, _execLiveModeBlocked: true },
+  // Idempotent order with same clientOrderId
+  { method: 'POST', path: '/api/execution/orders', body: { symbol: 'SPY', side: 'buy', quantity: 2, type: 'market', mode: 'paper', clientOrderId: 'smoke-dedup-001' }, _execIdempotent1: true },
+  { method: 'POST', path: '/api/execution/orders', body: { symbol: 'SPY', side: 'buy', quantity: 2, type: 'market', mode: 'paper', clientOrderId: 'smoke-dedup-001' }, _execIdempotent2: true },
+  // Risk check — oversized order should be rejected
+  { method: 'POST', path: '/api/execution/orders', body: { symbol: 'SPY', side: 'buy', quantity: 999999, type: 'market', mode: 'paper' }, _execRiskRejected: true },
+  // List orders and fills
+  { method: 'GET',  path: '/api/execution/orders' },
+  { method: 'GET',  path: '/api/execution/fills' },
+  { method: 'GET',  path: '/api/execution/analytics', _execAnalytics: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -221,7 +240,8 @@ async function run() {
       }
 
       if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
-          && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404) {
+          && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
+          && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -580,6 +600,90 @@ async function run() {
 
       if (check._mlDrift404) {
         if (response.status !== 404) throw new Error(`${check.path} missing model must return 404, got ${response.status}`);
+      }
+
+      // ── Phase 11: Execution Layer checks ────────────────────────────────────
+      if (check._execStatusCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.mode) throw new Error(`${check.path} missing mode field`);
+        if (!parsed.modeBadge) throw new Error(`${check.path} missing modeBadge field`);
+        if (parsed.liveExecutionEnabled == null) throw new Error(`${check.path} missing liveExecutionEnabled flag`);
+        if (parsed.phase12OMSReady == null) throw new Error(`${check.path} missing phase12OMSReady flag`);
+        // Default: live must be off
+        if (parsed.liveExecutionEnabled !== false) throw new Error(`${check.path} liveExecutionEnabled must be false by default`);
+      }
+
+      if (check._execKillSwitchOn) {
+        if (!parsed.ok) throw new Error(`${check.path} kill switch enable returned ok:false`);
+        if (!parsed.killSwitch) throw new Error(`${check.path} killSwitch must be true after enable`);
+      }
+
+      if (check._execKillSwitchOff) {
+        if (!parsed.ok) throw new Error(`${check.path} kill switch disable returned ok:false`);
+        if (parsed.killSwitch) throw new Error(`${check.path} killSwitch must be false after disable`);
+      }
+
+      if (check._execOrderPlace) {
+        // Paper order must succeed (kill switch was re-disabled before this)
+        if (!parsed.ok) throw new Error(`${check.path} paper order placement returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!parsed.order?.orderId) throw new Error(`${check.path} missing order.orderId`);
+        if (!parsed.order?.clientOrderId) throw new Error(`${check.path} missing order.clientOrderId`);
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} mode must be paper`);
+        if (parsed.modeBadge !== 'PAPER') throw new Error(`${check.path} modeBadge must be PAPER`);
+        if (parsed.order.status !== 'filled') throw new Error(`${check.path} paper order must fill immediately, got ${parsed.order.status}`);
+        // Inject cancel check for a second order
+        checks.push({
+          method: 'POST', path: '/api/execution/orders',
+          body: { symbol: 'SPY', side: 'sell', quantity: 1, type: 'market', mode: 'paper', clientOrderId: `smoke-cancel-${Date.now()}` },
+          _execForCancel: true,
+        });
+      }
+
+      if (check._execForCancel) {
+        if (!parsed.ok) throw new Error(`${check.path} cancel-prep order failed: ${JSON.stringify(parsed)}`);
+        // Try canceling a filled order — should fail gracefully
+        if (parsed.order?.orderId) {
+          checks.push({ method: 'DELETE', path: `/api/execution/orders/${parsed.order.orderId}`, _execCancelFilled: true });
+          checks.push({ method: 'GET',    path: `/api/execution/orders/${parsed.order.orderId}` });
+        }
+      }
+
+      if (check._execCancelFilled) {
+        // Canceling a filled order must return 422 (not 500)
+        if (response.status !== 422) throw new Error(`${check.path} canceling filled order must return 422, got ${response.status}`);
+      }
+
+      if (check._execLiveModeBlocked) {
+        // Live orders must be rejected when env flags not set
+        if (response.status !== 422) throw new Error(`${check.path} live order without flags must return 422, got ${response.status}`);
+        if (!parsed.order) throw new Error(`${check.path} live-blocked response missing order`);
+        if (parsed.order.status !== 'rejected') throw new Error(`${check.path} live-blocked order must have status rejected`);
+        if (!['MODE_GATE', 'PHASE12_GATE'].includes(parsed.riskCode)) throw new Error(`${check.path} wrong riskCode for live gate: ${parsed.riskCode}`);
+      }
+
+      if (check._execIdempotent1) {
+        if (!parsed.ok) throw new Error(`${check.path} first idempotent order failed`);
+        if (!parsed.order?.clientOrderId) throw new Error(`${check.path} missing clientOrderId`);
+      }
+
+      if (check._execIdempotent2) {
+        if (!parsed.ok) throw new Error(`${check.path} second idempotent order failed`);
+        if (!parsed.idempotent) throw new Error(`${check.path} repeated clientOrderId must set idempotent:true`);
+        if (parsed.order?.quantity !== 2) throw new Error(`${check.path} idempotent response must return original quantity`);
+      }
+
+      if (check._execRiskRejected) {
+        if (response.status !== 422) throw new Error(`${check.path} oversized order must return 422, got ${response.status}`);
+        if (!parsed.order) throw new Error(`${check.path} risk-rejected response missing order`);
+        if (parsed.order.status !== 'rejected') throw new Error(`${check.path} risk rejected order must have status rejected`);
+        if (!parsed.riskCode) throw new Error(`${check.path} risk-rejected response missing riskCode`);
+      }
+
+      if (check._execAnalytics) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.fillRate !== 'number') throw new Error(`${check.path} missing fillRate`);
+        if (typeof parsed.avgSlippageBps !== 'number') throw new Error(`${check.path} missing avgSlippageBps`);
+        if (!Array.isArray(parsed.symbolBreakdown)) throw new Error(`${check.path} missing symbolBreakdown array`);
       }
 
       if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
