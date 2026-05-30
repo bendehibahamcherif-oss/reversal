@@ -156,6 +156,14 @@ const checks = [
   { method: 'POST', path: '/api/oms/orders', body: { symbol: 'SPY', side: 'sell', quantity: 9, type: 'limit', mode: 'paper', clientOrderId: 'oms-smoke-dedup-001' }, _omsIdemp2: true },
   // Reconcile paper mode
   { method: 'POST', path: '/api/oms/reconcile?mode=paper', _omsRecon: true },
+  // ── Phase 13: Multi-Asset Analytics ──────────────────────────────────────────
+  { method: 'GET', path: '/api/multi-asset/sectors' },
+  { method: 'GET', path: '/api/multi-asset/correlation?symbols=SPY,QQQ,IWM&timeframe=1d&window=20', _maCorr: true },
+  { method: 'GET', path: '/api/multi-asset/beta?symbols=QQQ,IWM&benchmark=SPY&timeframe=1d&window=20', _maBeta: true },
+  { method: 'GET', path: '/api/multi-asset/sector-rotation?timeframe=1d&window=20', _maSector: true },
+  { method: 'GET', path: '/api/multi-asset/volatility?symbols=SPY,QQQ,IWM&timeframe=1d&window=20', _maVol: true },
+  { method: 'GET', path: '/api/multi-asset/heatmap?symbols=SPY,QQQ,IWM&timeframe=1d&window=20', _maHeatmap: true },
+  { method: 'GET', path: '/api/multi-asset/relative-performance?symbols=QQQ,IWM&benchmark=SPY&timeframe=1d&window=30', _maRelPerf: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -820,6 +828,104 @@ async function run() {
         if (typeof parsed.divergences !== 'number') throw new Error(`${check.path} missing divergences`);
         if (typeof parsed.corrections !== 'number') throw new Error(`${check.path} missing corrections`);
         if (!parsed.runId) throw new Error(`${check.path} missing runId`);
+      }
+
+      // ── Phase 13: Multi-Asset Analytics checks ───────────────────────────────
+      if (check._maCorr) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.matrix !== 'object') throw new Error(`${check.path} missing matrix`);
+        if (!Array.isArray(parsed.symbols)) throw new Error(`${check.path} missing symbols array`);
+        if (typeof parsed.window !== 'number') throw new Error(`${check.path} missing window`);
+        // Diagonal must be 1.0
+        for (const sym of parsed.symbols) {
+          if (parsed.matrix[sym]?.[sym] !== 1.0) throw new Error(`${check.path} diagonal must be 1.0 for ${sym}`);
+        }
+        // Off-diagonal must be number or null (not undefined)
+        for (const symA of parsed.symbols) {
+          for (const symB of parsed.symbols) {
+            const v = parsed.matrix[symA]?.[symB];
+            if (symA !== symB && v !== null && (typeof v !== 'number' || v < -1 - 1e-6 || v > 1 + 1e-6)) {
+              throw new Error(`${check.path} correlation out of [-1,1] range for ${symA}/${symB}: ${v}`);
+            }
+          }
+        }
+      }
+
+      if (check._maBeta) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.benchmark) throw new Error(`${check.path} missing benchmark`);
+        if (!Array.isArray(parsed.symbols)) throw new Error(`${check.path} missing symbols array`);
+        if (typeof parsed.beta !== 'object') throw new Error(`${check.path} missing beta object`);
+        for (const sym of parsed.symbols) {
+          const entry = parsed.beta[sym];
+          if (!entry) throw new Error(`${check.path} missing beta entry for ${sym}`);
+          if (!Array.isArray(entry.rollingBeta)) throw new Error(`${check.path} ${sym} missing rollingBeta array`);
+          if (typeof entry.dataPoints !== 'number') throw new Error(`${check.path} ${sym} missing dataPoints`);
+        }
+      }
+
+      if (check._maSector) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.sectors)) throw new Error(`${check.path} missing sectors array`);
+        if (parsed.sectors.length === 0) throw new Error(`${check.path} sectors array is empty`);
+        if (!parsed.benchmark) throw new Error(`${check.path} missing benchmark`);
+        if (typeof parsed.window !== 'number') throw new Error(`${check.path} missing window`);
+        for (const s of parsed.sectors) {
+          if (!s.sector) throw new Error(`${check.path} sector entry missing sector name`);
+          if (!s.etf) throw new Error(`${check.path} sector entry missing etf`);
+          if (typeof s.cumReturn !== 'number') throw new Error(`${check.path} ${s.etf} missing cumReturn`);
+          if (typeof s.score !== 'number') throw new Error(`${check.path} ${s.etf} missing score`);
+        }
+        // Confirm sorted by score descending
+        for (let i = 1; i < parsed.sectors.length; i++) {
+          if (parsed.sectors[i].score > parsed.sectors[i - 1].score) {
+            throw new Error(`${check.path} sectors not sorted by score desc at index ${i}`);
+          }
+        }
+      }
+
+      if (check._maVol) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.heatmap !== 'object') throw new Error(`${check.path} missing heatmap`);
+        if (!Array.isArray(parsed.symbols)) throw new Error(`${check.path} missing symbols array`);
+        for (const sym of parsed.symbols) {
+          const entry = parsed.heatmap[sym];
+          if (!entry) throw new Error(`${check.path} missing heatmap entry for ${sym}`);
+          if (!Array.isArray(entry.rollingVol)) throw new Error(`${check.path} ${sym} missing rollingVol array`);
+          if (typeof entry.volRank !== 'number') throw new Error(`${check.path} ${sym} missing volRank`);
+        }
+        // volRank must be 1..N with no duplicates
+        const ranks = parsed.symbols.map((s) => parsed.heatmap[s]?.volRank);
+        const sorted = [...ranks].sort((a, b) => a - b);
+        for (let i = 0; i < sorted.length; i++) {
+          if (sorted[i] !== i + 1) throw new Error(`${check.path} volRank not a contiguous 1..N sequence`);
+        }
+      }
+
+      if (check._maHeatmap) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.correlation !== 'object') throw new Error(`${check.path} missing correlation matrix`);
+        if (typeof parsed.volatility !== 'object') throw new Error(`${check.path} missing volatility heatmap`);
+        if (!Array.isArray(parsed.symbols)) throw new Error(`${check.path} missing symbols array`);
+        if (typeof parsed.window !== 'number') throw new Error(`${check.path} missing window`);
+      }
+
+      if (check._maRelPerf) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.benchmark) throw new Error(`${check.path} missing benchmark`);
+        if (!Array.isArray(parsed.symbols)) throw new Error(`${check.path} missing symbols array`);
+        if (typeof parsed.performance !== 'object') throw new Error(`${check.path} missing performance object`);
+        for (const sym of parsed.symbols) {
+          const entry = parsed.performance[sym];
+          if (!entry) throw new Error(`${check.path} missing performance entry for ${sym}`);
+          if (typeof entry.totalReturn !== 'number') throw new Error(`${check.path} ${sym} missing totalReturn`);
+          if (typeof entry.relativeReturn !== 'number') throw new Error(`${check.path} ${sym} missing relativeReturn`);
+          if (!Array.isArray(entry.cumSeries)) throw new Error(`${check.path} ${sym} missing cumSeries array`);
+          if (entry.cumSeries.length > 0) {
+            const first = entry.cumSeries[0];
+            if (first.asset !== 100 || first.benchmark !== 100) throw new Error(`${check.path} ${sym} cumSeries must start at 100`);
+          }
+        }
       }
 
       console.log(`OK ${check.method} ${path}`);
