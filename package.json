@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "server:smoke": "node scripts/server-smoke.cjs",
+    "test:ml": "node scripts/test-ml-inference.cjs",
     "check:server": "node --check server/index.cjs"
   },
   "engines": {

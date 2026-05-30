@@ -25,6 +25,7 @@ import chartRoutes from '../api/chartRoutes.js';
 import alertRoutes from '../api/alertRoutes.js';
 import volumeProfileRoutes from '../api/volumeProfileRoutes.js';
 import aiRoutes from '../api/aiRoutes.js';
+import mlRoutes from '../api/mlRoutes.js';
 import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
 import portfolioRoutes from '../api/portfolioRoutes.js';
 import executionRoutes from '../api/executionRoutes.js';
@@ -103,6 +104,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/alerts', alertRoutes);
   app.use('/api/volume-profile', volumeProfileRoutes);
   app.use('/api/ai', aiRoutes);
+  app.use('/api/ml', mlRoutes);
   app.use('/api/providers', providerCredentialRoutes);
   app.use('/api/portfolio', portfolioRoutes);
   app.use('/api/execution', strictRateLimiter(), executionRoutes);
