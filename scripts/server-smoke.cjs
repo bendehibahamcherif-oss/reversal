@@ -112,6 +112,18 @@ const checks = [
   { method: 'GET', path: '/api/ai/analytics/features/SPY' },
   { method: 'GET', path: '/api/ai/analytics/regimes/SPY' },
   { method: 'DELETE', path: '/api/ai/analytics/SPY' },
+  // ── Phase 9: ML engine ────────────────────────────────────────────────────────
+  { method: 'GET',  path: '/api/ai/ml/models' },
+  { method: 'GET',  path: '/api/ai/ml/models?symbol=SPY' },
+  { method: 'POST', path: '/api/ai/ml/datasets/create', body: { symbol: 'SPY', timeframe: '1m' }, _mlDatasetCreate: true },
+  // champion/challenger with no models — should 404 gracefully
+  { method: 'GET',  path: '/api/ai/ml/champion/SMOKE_NOSUCHSYMBOL', _mlChampion404: true },
+  // inference with no champion — should 422 gracefully
+  { method: 'POST', path: '/api/ai/ml/inference/SMOKE_NOSUCHSYMBOL', _mlInferenceNoChampion: true },
+  // feature importance with invalid id — should 404 gracefully
+  { method: 'GET',  path: '/api/ai/ml/feature-importance/nosuchmodel', _mlFI404: true },
+  // drift with invalid model id — should 404 gracefully
+  { method: 'GET',  path: '/api/ai/ml/drift/nosuchmodel', _mlDrift404: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -208,7 +220,8 @@ async function run() {
         throw new Error(`${check.method} ${check.path} did not return JSON`);
       }
 
-      if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck) {
+      if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
+          && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -477,6 +490,96 @@ async function run() {
       if (check._portfolioLiveCheck) {
         if (response.status !== 503) throw new Error(`${check.path} live mode must return 503, got ${response.status}`);
         if (!parsed.error) throw new Error(`${check.path} live mode 503 missing error message`);
+      }
+
+      // ── Phase 9: ML engine checks ────────────────────────────────────────────
+      if (check._mlDatasetCreate) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.datasetId) throw new Error(`${check.path} missing datasetId`);
+        if (!parsed.metadata) throw new Error(`${check.path} missing metadata`);
+        if (typeof parsed.metadata.sampleCount !== 'number') throw new Error(`${check.path} missing metadata.sampleCount`);
+        // Inject training start for the smoke check symbol (non-blocking — status check follows)
+        checks.push({
+          method: 'POST', path: '/api/ai/ml/training/start',
+          body: { symbol: 'SPY', timeframe: '1m', modelType: 'XGBoost', horizon: 5, notes: 'smoke test training' },
+          _mlTrainingStart: true,
+        });
+      }
+
+      if (check._mlTrainingStart) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.jobId) throw new Error(`${check.path} missing jobId`);
+        if (!['running', 'completed', 'failed'].includes(parsed.status)) throw new Error(`${check.path} invalid status: ${parsed.status}`);
+        // Inject training status check
+        checks.push({ method: 'GET', path: `/api/ai/ml/training/status/${parsed.jobId}`, _mlTrainingStatus: true });
+      }
+
+      if (check._mlTrainingStatus) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.job) throw new Error(`${check.path} missing job`);
+        if (typeof parsed.job.status !== 'string') throw new Error(`${check.path} job missing status`);
+        // If completed, inject champion/model checks
+        if (parsed.job.status === 'completed' && parsed.job.result?.model?.modelId) {
+          const mid = parsed.job.result.model.modelId;
+          checks.push({ method: 'GET', path: `/api/ai/ml/models/${mid}`, _mlModelGet: true });
+          checks.push({ method: 'GET', path: `/api/ai/ml/feature-importance/${mid}`, _mlFICheck: true });
+          checks.push({ method: 'GET', path: `/api/ai/ml/champion/SPY`, _mlChampionCheck: true });
+          checks.push({ method: 'POST', path: `/api/ai/ml/models/${mid}/promote`, _mlPromoteCheck: true });
+          checks.push({ method: 'POST', path: `/api/ai/ml/inference/SPY`, body: { timeframe: '1m' }, _mlInferenceCheck: true });
+        }
+      }
+
+      if (check._mlModelGet) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.model?.modelId) throw new Error(`${check.path} missing model.modelId`);
+        if (!parsed.model?.featureSet?.length) throw new Error(`${check.path} model missing featureSet`);
+        if (!parsed.model?.datasetHash) throw new Error(`${check.path} model missing datasetHash`);
+        if (typeof parsed.model?.horizon !== 'number') throw new Error(`${check.path} model missing horizon`);
+        if (!parsed.model?.trainingTimestamp) throw new Error(`${check.path} model missing trainingTimestamp`);
+      }
+
+      if (check._mlFICheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.ranked)) throw new Error(`${check.path} missing ranked array`);
+        if (typeof parsed.featureImportance !== 'object') throw new Error(`${check.path} missing featureImportance object`);
+      }
+
+      if (check._mlChampionCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.champion?.modelId) throw new Error(`${check.path} missing champion.modelId`);
+        if (parsed.champion.status !== 'champion') throw new Error(`${check.path} champion status must be champion`);
+      }
+
+      if (check._mlPromoteCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.model?.modelId) throw new Error(`${check.path} missing model.modelId`);
+      }
+
+      if (check._mlInferenceCheck) {
+        if (!parsed.ok) {
+          // Inference may fail if not enough feature records — acceptable in smoke
+          if (!parsed.warnings?.length) throw new Error(`${check.path} failed ok:false with no warnings`);
+        } else {
+          if (!parsed.modelId) throw new Error(`${check.path} missing modelId`);
+          if (!parsed.prediction) throw new Error(`${check.path} missing prediction`);
+          if (typeof parsed.confidence !== 'number') throw new Error(`${check.path} missing confidence`);
+        }
+      }
+
+      if (check._mlChampion404) {
+        if (response.status !== 404) throw new Error(`${check.path} no-symbol champion must return 404, got ${response.status}`);
+      }
+
+      if (check._mlInferenceNoChampion) {
+        if (![404, 422].includes(response.status)) throw new Error(`${check.path} no-champion inference must return 404 or 422, got ${response.status}`);
+      }
+
+      if (check._mlFI404) {
+        if (response.status !== 404) throw new Error(`${check.path} missing model must return 404, got ${response.status}`);
+      }
+
+      if (check._mlDrift404) {
+        if (response.status !== 404) throw new Error(`${check.path} missing model must return 404, got ${response.status}`);
       }
 
       if (check.method === 'GET' && check.path.startsWith('/api/volume-profile/')) {
