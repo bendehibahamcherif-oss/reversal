@@ -8,6 +8,8 @@ import { datasetBuilderService } from '../ai/datasets/datasetBuilderService.js';
 import { datasetSplitService } from '../ai/datasets/datasetSplitService.js';
 import { trainingPipelineService } from '../ai/training/trainingPipelineService.js';
 import { modelRegistryService } from '../ai/registry/modelRegistryService.js';
+import { inferenceService } from '../ai/inference/inferenceService.js';
+import { psiEngine } from '../ai/drift/psiEngine.js';
 
 const aiRoutes = Router();
 aiRoutes.post('/features/save/:symbol', async (req,res)=>{ const symbol=String(req.params.symbol||'').toUpperCase(); const timeframe=req.body?.timeframe||req.query?.timeframe||'1m'; const record = req.body?.record || await featureStore.buildFeatureRecord(symbol,timeframe); const saved=await featureStore.saveFeatureRecord({...record,symbol,timeframe}); return res.json({ok:true,symbol,timeframe,record:saved}); });
@@ -112,7 +114,135 @@ aiRoutes.get('/ml/training/status/:jobId', async (req,res)=>{
   return res.json({ok:true,job,warnings:job.warnings||[]});
 });
 
-aiRoutes.get('/ml/models', async (_req,res)=>{ const models=modelRegistryService.list(); return res.json({ok:true,models,warnings:models.length?[]:['No registered models found.']}); });
+aiRoutes.get('/ml/models', async (req,res)=>{
+  const symbol = req.query?.symbol ? String(req.query.symbol).toUpperCase() : null;
+  const models = modelRegistryService.list(symbol);
+  return res.json({ok:true,models,warnings:models.length?[]:['No registered models found.']});
+});
 aiRoutes.get('/ml/models/:modelId', async (req,res)=>{ const model=modelRegistryService.get(req.params.modelId); if(!model) return res.status(404).json({ok:false,error:'Model not found',warnings:[]}); return res.json({ok:true,model,warnings:[]}); });
+
+// ── Champion/challenger ────────────────────────────────────────────────────────
+
+// GET /api/ai/ml/champion/:symbol — get current champion for a symbol
+aiRoutes.get('/ml/champion/:symbol', (req, res) => {
+  const symbol = String(req.params.symbol || '').toUpperCase();
+  const champion = modelRegistryService.getChampion(symbol);
+  if (!champion) return res.status(404).json({ ok: false, error: 'No champion model for symbol', symbol, warnings: [] });
+  return res.json({ ok: true, symbol, champion, warnings: [] });
+});
+
+// POST /api/ai/ml/models/:modelId/promote — promote model to champion
+aiRoutes.post('/ml/models/:modelId/promote', (req, res) => {
+  const result = modelRegistryService.promote(req.params.modelId);
+  if (!result.ok) return res.status(404).json({ ok: false, error: result.error, warnings: [] });
+  return res.json({ ok: true, ...result, warnings: [] });
+});
+
+// GET /api/ai/ml/compare/:modelId1/:modelId2 — side-by-side model comparison
+aiRoutes.get('/ml/compare/:modelId1/:modelId2', (req, res) => {
+  const comparison = modelRegistryService.compare(req.params.modelId1, req.params.modelId2);
+  if (!comparison) return res.status(404).json({ ok: false, error: 'One or both models not found', warnings: [] });
+  return res.json({ ok: true, comparison, warnings: [] });
+});
+
+// ── Live inference ─────────────────────────────────────────────────────────────
+
+// POST /api/ai/ml/inference/:symbol — run live inference with champion model
+aiRoutes.post('/ml/inference/:symbol', async (req, res) => {
+  try {
+    const symbol    = String(req.params.symbol || '').toUpperCase();
+    const timeframe = req.body?.timeframe || req.query?.timeframe || '1m';
+    const result    = await inferenceService.infer(symbol, timeframe);
+    if (!result.ok) return res.status(422).json({ ok: false, ...result });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message, warnings: [] });
+  }
+});
+
+// GET /api/ai/ml/inference/:symbol — same but GET (uses cached result if fresh)
+aiRoutes.get('/ml/inference/:symbol', async (req, res) => {
+  try {
+    const symbol    = String(req.params.symbol || '').toUpperCase();
+    const timeframe = req.query?.timeframe || '1m';
+    const result    = await inferenceService.infer(symbol, timeframe);
+    if (!result.ok) return res.status(422).json({ ok: false, ...result });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message, warnings: [] });
+  }
+});
+
+// ── Feature importance ─────────────────────────────────────────────────────────
+
+// GET /api/ai/ml/feature-importance/:modelId — feature importance from trained model
+aiRoutes.get('/ml/feature-importance/:modelId', (req, res) => {
+  const model = modelRegistryService.get(req.params.modelId);
+  if (!model) return res.status(404).json({ ok: false, error: 'Model not found', warnings: [] });
+  const importance = model.featureImportance || {};
+  const ranked = Object.entries(importance)
+    .map(([feature, score]) => ({ feature, score: Number(score) }))
+    .sort((a, b) => b.score - a.score);
+  return res.json({ ok: true, modelId: model.modelId, modelType: model.modelType, symbol: model.symbol, featureImportance: importance, ranked, warnings: ranked.length ? [] : ['No feature importance data available for this model.'] });
+});
+
+// ── Drift monitoring ───────────────────────────────────────────────────────────
+
+// POST /api/ai/ml/drift/:modelId — compute PSI drift report
+aiRoutes.post('/ml/drift/:modelId', async (req, res) => {
+  try {
+    const model = modelRegistryService.get(req.params.modelId);
+    if (!model) return res.status(404).json({ ok: false, error: 'Model not found', warnings: [] });
+
+    const symbol      = model.symbol;
+    const timeframe   = model.timeframe || '1m';
+    const featureNames = model.featureSet || [];
+    if (!featureNames.length) return res.status(422).json({ ok: false, error: 'Model has no featureSet; retrain with Phase 9 engine.', warnings: [] });
+
+    // Get recent feature records as "current" distribution
+    const recentLimit = Number(req.body?.recentLimit) || 50;
+    const recentRecs  = (await featureStore.getFeatureRecords(symbol, recentLimit))
+      .filter((r) => r.timeframe === timeframe);
+
+    if (!recentRecs.length) {
+      return res.status(422).json({ ok: false, error: 'No recent feature records for drift computation.', warnings: [] });
+    }
+
+    // Build feature column vectors
+    const trainDatasetId = model.datasetVersion;
+    const trainDataset   = datasetBuilderService.getDatasetById(trainDatasetId);
+
+    // Training baseline: from persisted dataset if available, else synthesize from registry metadata
+    let baselineRows = trainDataset?.rows || [];
+    if (!baselineRows.length) {
+      // Fallback: use older feature records beyond the recent window
+      const allRecs = await featureStore.getFeatureRecords(symbol, 500);
+      baselineRows = allRecs
+        .filter((r) => r.timeframe === timeframe)
+        .slice(recentLimit); // everything older than "recent"
+    }
+
+    if (!baselineRows.length) {
+      return res.status(422).json({ ok: false, error: 'No baseline data for drift comparison. Train or collect more data.', warnings: [] });
+    }
+
+    const baselineVectors = psiEngine.extractFeatureVectors(baselineRows, featureNames);
+    const currentVectors  = psiEngine.extractFeatureVectors(recentRecs, featureNames);
+
+    const report = psiEngine.computeDrift(model.modelId, baselineVectors, currentVectors, featureNames);
+    return res.json({ ok: true, modelId: model.modelId, symbol, ...report, warnings: report.warnings || [] });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message, warnings: [] });
+  }
+});
+
+// GET /api/ai/ml/drift/:modelId — last drift report for a model
+aiRoutes.get('/ml/drift/:modelId', (req, res) => {
+  const model = modelRegistryService.get(req.params.modelId);
+  if (!model) return res.status(404).json({ ok: false, error: 'Model not found', warnings: [] });
+  const report = psiEngine.getLatestDrift(req.params.modelId);
+  if (!report) return res.json({ ok: true, modelId: req.params.modelId, report: null, warnings: ['No drift report computed yet. POST to /ml/drift/:modelId to compute.'] });
+  return res.json({ ok: true, modelId: req.params.modelId, report, warnings: [] });
+});
 
 export default aiRoutes;
