@@ -28,6 +28,7 @@ import aiRoutes from '../api/aiRoutes.js';
 import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
 import portfolioRoutes from '../api/portfolioRoutes.js';
 import executionRoutes from '../api/executionRoutes.js';
+import omsRoutes from '../api/omsRoutes.js';
 
 export function applyRuntimeIntegration(app) {
   const runtimeHealthResponse = (req, res) => {
@@ -96,4 +97,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/providers', providerCredentialRoutes);
   app.use('/api/portfolio', portfolioRoutes);
   app.use('/api/execution', executionRoutes);
+  app.use('/api/oms', omsRoutes);
 }
