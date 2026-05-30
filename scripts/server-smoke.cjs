@@ -164,6 +164,65 @@ const checks = [
   { method: 'GET', path: '/api/multi-asset/volatility?symbols=SPY,QQQ,IWM&timeframe=1d&window=20', _maVol: true },
   { method: 'GET', path: '/api/multi-asset/heatmap?symbols=SPY,QQQ,IWM&timeframe=1d&window=20', _maHeatmap: true },
   { method: 'GET', path: '/api/multi-asset/relative-performance?symbols=QQQ,IWM&benchmark=SPY&timeframe=1d&window=30', _maRelPerf: true },
+  // ── Phase 14: Institutional Toolkit ──────────────────────────────────────────
+  // Preset catalogue
+  { method: 'GET', path: '/api/institutional/scenarios/presets', _instPresets: true },
+  // Volatility sizing — smoke with known inputs; verify formula reproducibility
+  { method: 'POST', path: '/api/institutional/sizing/volatility',
+    body: { accountSize: 100000, riskPct: 0.01, annualizedVol: 0.20, currentPrice: 500, horizonDays: 1, mode: 'paper' },
+    _instVolSizing: true },
+  // Volatility sizing with ML confidence
+  { method: 'POST', path: '/api/institutional/sizing/volatility',
+    body: { accountSize: 100000, riskPct: 0.01, annualizedVol: 0.20, currentPrice: 500, horizonDays: 1, mlSignalConfidence: 0.80, mode: 'paper' },
+    _instVolSizingML: true },
+  // Kelly sizing — verify formula and cap behaviour
+  { method: 'POST', path: '/api/institutional/sizing/kelly',
+    body: { accountSize: 100000, winProbability: 0.55, avgWinPct: 0.08, avgLossPct: 0.04, currentPrice: 500, kellyFraction: 0.5, maxKellyPct: 0.25, mode: 'paper' },
+    _instKelly: true },
+  // Kelly with ML confidence scaling
+  { method: 'POST', path: '/api/institutional/sizing/kelly',
+    body: { accountSize: 100000, winProbability: 0.55, avgWinPct: 0.08, avgLossPct: 0.04, kellyFraction: 0.5, maxKellyPct: 0.25, mlSignalConfidence: 0.70, mode: 'paper' },
+    _instKellyML: true },
+  // Kelly with negative edge (should return rawKelly < 0, cappedKelly = 0)
+  { method: 'POST', path: '/api/institutional/sizing/kelly',
+    body: { accountSize: 100000, winProbability: 0.30, avgWinPct: 0.05, avgLossPct: 0.10, mode: 'paper' },
+    _instKellyNeg: true },
+  // Custom scenario
+  { method: 'POST', path: '/api/institutional/scenarios/run',
+    body: {
+      name: 'Smoke Crash -20%',
+      shocks: { SPY: -0.20, QQQ: -0.25, '*': -0.20 },
+      positions: [
+        { symbol: 'SPY', quantity: 100, currentPrice: 500, side: 'long' },
+        { symbol: 'QQQ', quantity: 50,  currentPrice: 450, side: 'long' },
+      ],
+      accountSize: 100000,
+      mode: 'paper',
+    },
+    _instScenario: true },
+  // Preset stress pack
+  { method: 'POST', path: '/api/institutional/scenarios/stress-pack/covid_2020',
+    body: {
+      positions: [
+        { symbol: 'SPY', quantity: 100, currentPrice: 500, side: 'long' },
+        { symbol: 'TLT', quantity: 50,  currentPrice: 100, side: 'long' },
+      ],
+      accountSize: 100000,
+      mode: 'paper',
+    },
+    _instStressPack: true },
+  // List scenarios
+  { method: 'GET', path: '/api/institutional/scenarios' },
+  // Audit trail
+  { method: 'GET', path: '/api/institutional/audit', _instAudit: true },
+  // Export report (no auditIds — empty bundle still produces valid report)
+  { method: 'POST', path: '/api/institutional/report/export',
+    body: { title: 'Smoke Report', mode: 'paper', analyst: 'smoke-test', accountSize: 100000 },
+    _instExport: true },
+  // Verify unknown packId returns 400
+  { method: 'POST', path: '/api/institutional/scenarios/stress-pack/no_such_pack',
+    body: { positions: [{ symbol: 'SPY', quantity: 1, currentPrice: 500, side: 'long' }] },
+    _instBadPack: true },
 ];
 
 async function waitForReady(timeoutMs = 12000) {
@@ -263,7 +322,7 @@ async function run() {
       if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
           && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
           && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled
-          && !check._omsNotFound) {
+          && !check._omsNotFound && !check._instBadPack) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -828,6 +887,190 @@ async function run() {
         if (typeof parsed.divergences !== 'number') throw new Error(`${check.path} missing divergences`);
         if (typeof parsed.corrections !== 'number') throw new Error(`${check.path} missing corrections`);
         if (!parsed.runId) throw new Error(`${check.path} missing runId`);
+      }
+
+      // ── Phase 14: Institutional Toolkit checks ───────────────────────────────
+      if (check._instPresets) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.presets)) throw new Error(`${check.path} missing presets array`);
+        if (parsed.presets.length === 0) throw new Error(`${check.path} presets array is empty`);
+        for (const p of parsed.presets) {
+          if (!p.packId)      throw new Error(`preset missing packId`);
+          if (!p.name)        throw new Error(`preset ${p.packId} missing name`);
+          if (!p.shocks)      throw new Error(`preset ${p.packId} missing shocks`);
+        }
+      }
+
+      if (check._instVolSizing) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!parsed.auditId)               throw new Error(`${check.path} missing auditId`);
+        if (typeof parsed.shares !== 'number' || parsed.shares <= 0) throw new Error(`${check.path} shares must be positive number`);
+        if (typeof parsed.positionValue !== 'number') throw new Error(`${check.path} missing positionValue`);
+        if (typeof parsed.dollarRisk !== 'number')    throw new Error(`${check.path} missing dollarRisk`);
+        if (parsed.mode !== 'paper')                  throw new Error(`${check.path} mode must be paper`);
+        if (parsed.mlScalingApplied !== false)        throw new Error(`${check.path} mlScalingApplied must be false when no ML`);
+        // Verify formula: shares = (100000 * 0.01) / (500 * (0.20/sqrt(252)) * sqrt(1))
+        const expected = (100000 * 0.01) / (500 * (0.20 / Math.sqrt(252)) * Math.sqrt(1));
+        const diff = Math.abs(parsed.shares - expected);
+        if (diff > 0.01) throw new Error(`${check.path} volatility sizing formula mismatch: got ${parsed.shares} expected ~${expected.toFixed(4)}`);
+        // Inject audit fetch check
+        checks.push({ method: 'GET', path: `/api/institutional/audit/${parsed.auditId}`, _instAuditGet: true });
+      }
+
+      if (check._instVolSizingML) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.mlScalingApplied !== true)  throw new Error(`${check.path} mlScalingApplied must be true when ML provided`);
+        if (parsed.mlSignalConfidence !== 0.80) throw new Error(`${check.path} mlSignalConfidence must be 0.80`);
+        if (typeof parsed.sharesUnscaled !== 'number') throw new Error(`${check.path} missing sharesUnscaled`);
+        // scaled shares must be 80% of unscaled
+        const ratio = parsed.shares / parsed.sharesUnscaled;
+        if (Math.abs(ratio - 0.80) > 0.001) throw new Error(`${check.path} ML scaling ratio wrong: ${ratio} (expected 0.80)`);
+      }
+
+      if (check._instKelly) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!parsed.auditId)                        throw new Error(`${check.path} missing auditId`);
+        if (typeof parsed.rawKelly !== 'number')    throw new Error(`${check.path} missing rawKelly`);
+        if (typeof parsed.cappedKelly !== 'number') throw new Error(`${check.path} missing cappedKelly`);
+        if (parsed.cappedKelly > 0.25 + 1e-6)       throw new Error(`${check.path} cappedKelly exceeds maxKellyPct 0.25`);
+        if (!parsed.edgePositive)                   throw new Error(`${check.path} edge must be positive for 55% win rate`);
+        if (parsed.mode !== 'paper')                throw new Error(`${check.path} mode must be paper`);
+        // Verify Kelly formula: b=2, p=0.55, q=0.45 → rawKelly = 0.55 - 0.45/2 = 0.325
+        const expected = 0.55 - 0.45 / 2;
+        if (Math.abs(parsed.rawKelly - expected) > 0.001) {
+          throw new Error(`${check.path} Kelly formula mismatch: got ${parsed.rawKelly} expected ${expected}`);
+        }
+        // fractionalKelly = 0.325 * 0.5 = 0.1625; cappedKelly = min(0.1625, 0.25) = 0.1625
+        const expectedFrac = expected * 0.5;
+        if (Math.abs(parsed.fractionalKelly - expectedFrac) > 0.001) {
+          throw new Error(`${check.path} fractionalKelly mismatch: got ${parsed.fractionalKelly} expected ${expectedFrac}`);
+        }
+      }
+
+      if (check._instKellyML) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.mlScalingApplied !== true) throw new Error(`${check.path} mlScalingApplied must be true`);
+        // adjustedKelly = fractionalKelly * 0.70
+        const adjExpected = (0.55 - 0.45 / 2) * 0.5 * 0.70;
+        if (Math.abs(parsed.adjustedKelly - adjExpected) > 0.001) {
+          throw new Error(`${check.path} adjustedKelly mismatch: got ${parsed.adjustedKelly} expected ~${adjExpected.toFixed(4)}`);
+        }
+      }
+
+      if (check._instKellyNeg) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.rawKelly >= 0) throw new Error(`${check.path} rawKelly must be negative for losing edge`);
+        if (parsed.cappedKelly !== 0) throw new Error(`${check.path} cappedKelly must be 0 for negative edge`);
+        if (parsed.edgePositive !== false) throw new Error(`${check.path} edgePositive must be false`);
+      }
+
+      if (check._instScenario) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false: ${JSON.stringify(parsed)}`);
+        if (!parsed.auditId)                        throw new Error(`${check.path} missing auditId`);
+        if (!parsed.scenarioId)                     throw new Error(`${check.path} missing scenarioId`);
+        if (typeof parsed.totalPnlImpact !== 'number') throw new Error(`${check.path} missing totalPnlImpact`);
+        if (typeof parsed.drawdownPct !== 'number') throw new Error(`${check.path} missing drawdownPct`);
+        if (!Array.isArray(parsed.details))         throw new Error(`${check.path} missing details array`);
+        if (parsed.details.length !== 2)            throw new Error(`${check.path} expected 2 position details`);
+        // SPY: 100 × 500 × -0.20 = -10000
+        const spyDetail = parsed.details.find((d) => d.symbol === 'SPY');
+        if (!spyDetail) throw new Error(`${check.path} missing SPY in details`);
+        if (Math.abs(spyDetail.pnlImpact - (-10000)) > 1) {
+          throw new Error(`${check.path} SPY pnlImpact wrong: got ${spyDetail.pnlImpact} expected -10000`);
+        }
+        // QQQ: 50 × 450 × -0.25 = -5625
+        const qqqDetail = parsed.details.find((d) => d.symbol === 'QQQ');
+        if (Math.abs(qqqDetail.pnlImpact - (-5625)) > 1) {
+          throw new Error(`${check.path} QQQ pnlImpact wrong: got ${qqqDetail.pnlImpact} expected -5625`);
+        }
+        // drawdownPct = totalPnlImpact / accountSize * 100 = -15625 / 100000 * 100 = -15.625
+        if (Math.abs(parsed.drawdownPct - (-15.625)) > 0.01) {
+          throw new Error(`${check.path} drawdownPct wrong: got ${parsed.drawdownPct} expected -15.625`);
+        }
+        // Inject scenario fetch
+        checks.push({ method: 'GET', path: `/api/institutional/scenarios/${parsed.scenarioId}`, _instScenGet: true });
+        // Inject export with these auditIds
+        checks.push({
+          method: 'POST', path: '/api/institutional/report/export',
+          body: { auditIds: [parsed.auditId], accountSize: 100000, mode: 'paper', title: 'Smoke Scenario Report' },
+          _instExportWithAudit: true,
+        });
+      }
+
+      if (check._instStressPack) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false: ${JSON.stringify(parsed)}`);
+        if (parsed.packId !== 'covid_2020')             throw new Error(`${check.path} wrong packId`);
+        if (!parsed.auditId)                            throw new Error(`${check.path} missing auditId`);
+        if (typeof parsed.totalPnlImpact !== 'number')  throw new Error(`${check.path} missing totalPnlImpact`);
+        if (!Array.isArray(parsed.details))             throw new Error(`${check.path} missing details`);
+        if (!parsed.name)                               throw new Error(`${check.path} missing name`);
+        // SPY shock in covid_2020 = -0.34 → pnlImpact = 100 × 500 × -0.34 = -17000
+        const spyD = parsed.details.find((d) => d.symbol === 'SPY');
+        if (!spyD) throw new Error(`${check.path} SPY missing in details`);
+        if (Math.abs(spyD.pnlImpact - (-17000)) > 1) throw new Error(`${check.path} SPY covid shock wrong: ${spyD.pnlImpact}`);
+        // TLT shock in covid_2020 = +0.15 → 50 × 100 × 0.15 = 750
+        const tltD = parsed.details.find((d) => d.symbol === 'TLT');
+        if (!tltD) throw new Error(`${check.path} TLT missing in details`);
+        if (Math.abs(tltD.pnlImpact - 750) > 1) throw new Error(`${check.path} TLT covid shock wrong: ${tltD.pnlImpact}`);
+        // mode must be paper
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} mode must be paper`);
+      }
+
+      if (check._instAudit) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.entries)) throw new Error(`${check.path} missing entries array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} missing count`);
+        if (parsed.entries.length > 0) {
+          const e = parsed.entries[0];
+          if (!e.auditId)      throw new Error(`${check.path} audit entry missing auditId`);
+          if (!e.timestamp)    throw new Error(`${check.path} audit entry missing timestamp`);
+          if (!e.analysisType) throw new Error(`${check.path} audit entry missing analysisType`);
+          if (!e.mode)         throw new Error(`${check.path} audit entry missing mode`);
+          if (e.inputs == null) throw new Error(`${check.path} audit entry missing inputs`);
+          if (e.outputs == null) throw new Error(`${check.path} audit entry missing outputs`);
+        }
+      }
+
+      if (check._instAuditGet) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.entry?.auditId)      throw new Error(`${check.path} missing entry.auditId`);
+        if (!parsed.entry?.inputs)       throw new Error(`${check.path} missing entry.inputs`);
+        if (!parsed.entry?.outputs)      throw new Error(`${check.path} missing entry.outputs`);
+        if (!parsed.entry?.engineVersion) throw new Error(`${check.path} missing engineVersion in entry`);
+      }
+
+      if (check._instScenGet) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.scenario?.scenarioId) throw new Error(`${check.path} missing scenario.scenarioId`);
+        if (!parsed.scenario?.results)    throw new Error(`${check.path} missing scenario.results`);
+      }
+
+      if (check._instExport) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.report?.reportId)     throw new Error(`${check.path} missing report.reportId`);
+        if (!parsed.report?.reportVersion) throw new Error(`${check.path} missing report.reportVersion`);
+        if (!parsed.report?.assumptions)  throw new Error(`${check.path} missing report.assumptions`);
+        if (!parsed.report?.assumptions?.formulaDefinitions) throw new Error(`${check.path} report missing formulaDefinitions`);
+        if (!parsed.report?.summary)      throw new Error(`${check.path} missing report.summary`);
+        if (!Array.isArray(parsed.report?.auditTrail)) throw new Error(`${check.path} missing report.auditTrail`);
+        if (parsed.report.mode !== 'paper')  throw new Error(`${check.path} report mode must be paper`);
+        if (!parsed.exportAuditId)           throw new Error(`${check.path} missing exportAuditId`);
+      }
+
+      if (check._instExportWithAudit) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.report?.summary?.auditEntriesReferenced !== 1) {
+          throw new Error(`${check.path} report should reference exactly 1 audit entry, got ${parsed.report?.summary?.auditEntriesReferenced}`);
+        }
+        if (parsed.report?.summary?.scenarioAnalyses !== 1) {
+          throw new Error(`${check.path} report should have 1 scenarioAnalysis`);
+        }
+        if (parsed.report?.summary?.worstCasePnl == null) throw new Error(`${check.path} missing worstCasePnl`);
+      }
+
+      if (check._instBadPack) {
+        if (response.status !== 400) throw new Error(`${check.path} unknown packId must return 400, got ${response.status}`);
+        if (!parsed.error) throw new Error(`${check.path} error message missing`);
       }
 
       // ── Phase 13: Multi-Asset Analytics checks ───────────────────────────────
