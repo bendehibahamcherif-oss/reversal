@@ -41,15 +41,17 @@ from dataset_utils import (
     temporal_train_val_test_split,
     time_series_cv,
 )
-from feature_engineering import FEATURE_NAMES_P1, compute_features
-from label_builder import create_labels
+from feature_builder import ALL_FEATURE_NAMES, build_features
+from label_builder import build_p1_labels
 from metrics import evaluate_classification_metrics, format_metrics_summary
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-LABEL_CLASSES   = ["DOWN", "NEUTRAL", "UP"]   # ordered; must match inv_label_map
+# P1 label scheme: SHORT=0, NEUTRAL=1, LONG=2
+LABEL_CLASSES   = ["SHORT", "NEUTRAL", "LONG"]
 LABEL_CLASS_MAP = {cls: idx for idx, cls in enumerate(LABEL_CLASSES)}
+INV_LABEL_MAP   = {str(idx): cls for idx, cls in enumerate(LABEL_CLASSES)}
 
 FEATURE_VERSION      = "p1_v1"
 LABEL_SPEC_VERSION   = "ls_v1"
@@ -79,33 +81,37 @@ def train_pipeline(
     dataset_hash = compute_dataframe_hash(df)
     print(f"[train] Loaded {len(df)} rows | dataset_hash={dataset_hash[:12]}")
 
-    # ── Labels ────────────────────────────────────────────────────────────────
-    print(f"[train] Building labels (horizon={horizon}, up={up_threshold}, down={down_threshold})")
-    df["label"] = create_labels(
+    # ── Labels (P1 scheme: SHORT=0, NEUTRAL=1, LONG=2) ───────────────────────
+    print(f"[train] Building P1 labels (horizon={horizon}, tau_up={up_threshold}, tau_down={down_threshold})")
+    y_raw = build_p1_labels(
         df,
         horizon=horizon,
-        up_threshold=up_threshold,
-        down_threshold=down_threshold,
+        tau_up=up_threshold,
+        tau_down=down_threshold,
     )
-    df = df.dropna(subset=["label"])
-    label_dist = df["label"].value_counts().to_dict()
+    valid_label_mask = y_raw.notna()
+    df     = df.loc[valid_label_mask]
+    y_raw  = y_raw.loc[valid_label_mask]
+    y_int  = y_raw.astype(int).to_numpy()
+    y      = np.array([LABEL_CLASSES[i] for i in y_int])
+    label_dist = {LABEL_CLASSES[int(k)]: int(v) for k, v in
+                  zip(*np.unique(y_int, return_counts=True))}
     print(f"[train] Label distribution: {label_dist}")
 
-    # ── Features ──────────────────────────────────────────────────────────────
-    print("[train] Computing P1 features")
-    X_df = compute_features(df)
-    X_df = X_df.loc[df.index]            # align index after dropna
+    # ── Features (30-feature P1 set) ──────────────────────────────────────────
+    print("[train] Computing P1 features (30 features)")
+    X_df = build_features(df)
     valid_mask = X_df.notna().all(axis=1)
-    X_df = X_df[valid_mask].fillna(0.0)
+    X_df = X_df[valid_mask]
     df   = df.loc[X_df.index]
+    y_int = y_int[valid_mask.to_numpy()]
+    y     = y[valid_mask.to_numpy()]
 
     feature_names       = list(X_df.columns)
     feature_schema_hash = compute_schema_hash(feature_names)
     print(f"[train] Features: {len(feature_names)} | schema_hash={feature_schema_hash[:12]}")
 
     X = X_df.to_numpy(dtype=float)
-    y = df["label"].to_numpy()
-    y_int = np.array([LABEL_CLASS_MAP[lbl] for lbl in y])
 
     # ── Temporal split ────────────────────────────────────────────────────────
     n = len(df)
@@ -136,7 +142,7 @@ def train_pipeline(
         C=1.0,
         random_state=seed,
     )
-    lr.fit(X_train, y_train)
+    lr.fit(X_train, y_int_train)
 
     xgb = XGBClassifier(
         objective="multi:softprob",
@@ -181,24 +187,24 @@ def train_pipeline(
     models = {"logistic": lr, "xgb": xgb, "lgb": lgb}
 
     # ── Validation evaluation ─────────────────────────────────────────────────
-    val_metrics = {}
-    for name, model in models.items():
-        if name == "logistic":
-            y_proba = model.predict_proba(X_val)
-            y_pred  = model.predict(X_val)
-        elif name == "xgb":
+    def _predict(model, name, X):
+        """Return (y_proba, y_pred_str) for any model type."""
+        if name == "xgb":
             import xgboost as _xgb
-            dm = _xgb.DMatrix(X_val)
+            dm = _xgb.DMatrix(X)
             proba_flat = model.get_booster().predict(dm)
             y_proba = proba_flat.reshape(-1, n_classes)
-            y_pred  = LABEL_CLASSES[np.argmax(y_proba, axis=1).astype(int)[0]] if len(y_proba) == 1 else \
-                      np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
         else:
-            y_proba = model.predict_proba(X_val)
-            y_pred  = np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
+            y_proba = model.predict_proba(X)
+        y_pred = np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
+        return y_proba, y_pred
 
+    val_metrics = {}
+    for name, model in models.items():
+        y_proba, y_pred = _predict(model, name, X_val)
+        y_val_str = np.array([LABEL_CLASSES[i] for i in y_int_val])
         m = evaluate_classification_metrics(
-            y_val, y_pred, y_proba,
+            y_val_str, y_pred, y_proba,
             model_name=name,
             class_labels=LABEL_CLASSES,
         )
@@ -214,21 +220,11 @@ def train_pipeline(
     print(f"[train] Champion: {best_model_name}")
 
     # ── Test set evaluation ───────────────────────────────────────────────────
-    if best_model_name == "logistic":
-        y_proba_test = champion.predict_proba(X_test)
-        y_pred_test  = champion.predict(X_test)
-    elif best_model_name == "xgb":
-        import xgboost as _xgb
-        dm = _xgb.DMatrix(X_test)
-        proba_flat = champion.get_booster().predict(dm)
-        y_proba_test = proba_flat.reshape(-1, n_classes)
-        y_pred_test  = np.array([LABEL_CLASSES[i] for i in y_proba_test.argmax(axis=1)])
-    else:
-        y_proba_test = champion.predict_proba(X_test)
-        y_pred_test  = np.array([LABEL_CLASSES[i] for i in y_proba_test.argmax(axis=1)])
+    y_proba_test, y_pred_test = _predict(champion, best_model_name, X_test)
+    y_test_str = np.array([LABEL_CLASSES[i] for i in y_int_test])
 
     test_metrics = evaluate_classification_metrics(
-        y_test, y_pred_test, y_proba_test,
+        y_test_str, y_pred_test, y_proba_test,
         model_name=best_model_name,
         class_labels=LABEL_CLASSES,
     )
@@ -271,6 +267,7 @@ def train_pipeline(
             "test_n":      len(X_test),
         },
         "best_model":          best_model_name,
+        "inv_label_map":       INV_LABEL_MAP,
         "validation_metrics":  {k: _strip_arrays(v) for k, v in val_metrics.items()},
         "test_metrics":        _strip_arrays(test_metrics),
         "feature_importance":  feature_importance,
@@ -289,6 +286,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="ML Signal Engine — training pipeline")
     p.add_argument("--data",           required=True,         help="Path to OHLCV Parquet snapshot")
     p.add_argument("--output",         default="server/ai/models", help="Output directory for models")
+    p.add_argument("--symbol",         default="*",           help="Instrument symbol (stored in metadata)")
     p.add_argument("--horizon",        type=int,   default=20)
     p.add_argument("--up-threshold",   type=float, default=0.005)
     p.add_argument("--down-threshold", type=float, default=-0.005)
