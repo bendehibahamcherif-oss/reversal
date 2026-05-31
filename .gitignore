@@ -3,3 +3,9 @@ node_modules
 .DS_Store
 *.log
 server/persistence/secure/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
