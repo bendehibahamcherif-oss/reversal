@@ -46,6 +46,7 @@ from feature_builder import ALL_FEATURE_NAMES, build_features
 from feature_schema import save_schema as _save_feature_schema
 from label_builder import build_p1_labels
 from metrics import evaluate_classification_metrics, format_metrics_summary
+from calibration import calibrate_model, compare_calibration
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -159,6 +160,8 @@ def train_pipeline(
             f"Val boundary must be at least horizon={horizon} rows after train end"
 
     # ── Model training ────────────────────────────────────────────────────────
+    from calibration import _PrefitCalibrated as _CalibratedCV  # noqa: PLC0415
+
     n_classes = len(LABEL_CLASSES)
 
     lr = LogisticRegression(
@@ -249,8 +252,11 @@ def train_pipeline(
     # ── Validation evaluation ─────────────────────────────────────────────────
     def _predict(model, name, X):
         """Return (y_proba, y_pred_str) for any model type."""
-        if name == "xgb":
-            import xgboost as _xgb
+        if isinstance(model, _CalibratedCV):
+            # Calibrated wrapper always exposes predict_proba
+            y_proba = model.predict_proba(X)
+        elif name == "xgb":
+            import xgboost as _xgb  # noqa: PLC0415
             dm = _xgb.DMatrix(X)
             proba_flat = model.get_booster().predict(dm)
             y_proba = proba_flat.reshape(-1, n_classes)
@@ -289,6 +295,50 @@ def train_pipeline(
         class_labels=LABEL_CLASSES,
     )
     print(f"  test {format_metrics_summary(test_metrics)}")
+
+    # ── Calibration (Platt scaling on val set, evaluated on test set) ────────
+    #
+    # Fit CalibratedClassifierCV(cv="prefit") on the val split so no training
+    # data touches the calibration layer.  Compare Brier score on LONG class
+    # before and after; keep calibrated champion if Brier improves.
+    cal_comparison: dict = {}
+    _calibrated_model   = None
+
+    try:
+        print("[train] Fitting Platt calibration (sigmoid) on val set …")
+        _cal = calibrate_model(champion, X_val, y_int_val, method="sigmoid")
+        _y_proba_cal_test = _cal.predict_proba(X_test)
+        cal_comparison = compare_calibration(
+            y_int_test, y_proba_test, _y_proba_cal_test, long_class_idx=2
+        )
+        print(
+            f"[train] Calibration — "
+            f"Brier LONG before={cal_comparison['brier_before']:.4f}  "
+            f"after={cal_comparison['brier_after']:.4f}  "
+            f"gain={cal_comparison['gain']:.4f}  "
+            f"improved={cal_comparison['improved']}"
+        )
+        if cal_comparison["improved"]:
+            _calibrated_model = _cal
+            # Re-run test metrics with calibrated probabilities
+            _y_pred_cal = np.array([LABEL_CLASSES[i]
+                                    for i in _y_proba_cal_test.argmax(axis=1)])
+            test_metrics = evaluate_classification_metrics(
+                y_test_str, _y_pred_cal, _y_proba_cal_test,
+                model_name=f"{best_model_name}_calibrated",
+                class_labels=LABEL_CLASSES,
+            )
+            y_proba_test = _y_proba_cal_test
+            print("[train] Using calibrated champion (Brier improved on LONG class)")
+        else:
+            print("[train] Calibration did not improve — keeping uncalibrated champion")
+    except Exception as _cal_exc:
+        import warnings
+        warnings.warn(
+            f"[train] Calibration step failed (pipeline continues): {_cal_exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # ── Feature importance (XGBoost gain) ─────────────────────────────────────
     feature_importance = {}
@@ -337,10 +387,19 @@ def train_pipeline(
         "feature_importance":  feature_importance,
         "best_params_xgb":     {k: v for k, v in best_params_xgb.items()},
         "best_params_lgb":     {k: v for k, v in best_params_lgb.items()},
+        "calibration":         cal_comparison,
+        "calibrated_artifact": "calibrated_champion.pkl" if _calibrated_model else None,
     }
 
     # ── Save models + metadata ────────────────────────────────────────────────
     save_models(models, metadata, output_dir)
+
+    # ── Save calibrated champion (if calibration improved) ───────────────────
+    if _calibrated_model is not None:
+        import joblib as _joblib  # noqa: PLC0415
+        _cal_path = os.path.join(output_dir, "calibrated_champion.pkl")
+        _joblib.dump(_calibrated_model, _cal_path)
+        print(f"[train] Saved calibrated_champion.pkl → {_cal_path}")
 
     # ── Extra artifact: feature_schema.json ──────────────────────────────────
     _save_feature_schema(output_dir)
@@ -360,10 +419,10 @@ def train_pipeline(
 
     # ── Model card ────────────────────────────────────────────────────────────
     _test_m = _strip_arrays(test_metrics)
-    _accuracy = float(_test_m.get("accuracy", 0.0))
-    _f1       = float(_test_m.get("f1_macro",  0.0))
-    _auc      = float(_test_m.get("roc_auc",   0.0))
-    _brier    = float(_test_m.get("brier",     0.0))
+    _accuracy = float(_test_m.get("accuracy",     0.0))
+    _f1       = float(_test_m.get("f1_macro",     0.0))
+    _auc      = float(_test_m.get("roc_auc",      0.0))
+    _brier    = float(_test_m.get("brier_score",  0.0))  # key is brier_score in metrics.py
 
     _MODEL_CARD_TEMPLATE = """\
 # Model Card — P1 ML Signal Engine
@@ -412,8 +471,13 @@ NEUTRAL (1) : sinon
 - **ROC AUC** : {auc:.4f}
 - **Brier** : {brier:.4f}
 
-## Calibration
-Brier Score (classe LONG) : {brier:.4f}
+## Calibration (Platt sigmoid sur val set)
+| Métrique | Avant calibrage | Après calibrage |
+|---|---|---|
+| Brier LONG | {brier_before:.4f} | {brier_after:.4f} |
+| Gain relatif | — | {cal_gain:+.2%} |
+
+Calibrage utilisé en production : **{cal_used}**
 
 ## Limites connues
 - Sur-apprentissage possible en période de forte tendance.
@@ -448,6 +512,11 @@ Brier Score (classe LONG) : {brier:.4f}
 - **Entraîné le** : {trained_at}
 """
 
+    _brier_before = float(cal_comparison.get("brier_before", _brier))
+    _brier_after  = float(cal_comparison.get("brier_after",  _brier))
+    _cal_gain     = float(cal_comparison.get("gain",         0.0))
+    _cal_used     = "Oui" if _calibrated_model is not None else "Non"
+
     _card_content = _MODEL_CARD_TEMPLATE.format(
         tau_up_pct=up_threshold * 100,
         tau_down_pct=down_threshold * 100,
@@ -456,6 +525,10 @@ Brier Score (classe LONG) : {brier:.4f}
         f1=_f1,
         auc=_auc,
         brier=_brier,
+        brier_before=_brier_before,
+        brier_after=_brier_after,
+        cal_gain=_cal_gain,
+        cal_used=_cal_used,
         best_model=best_model_name,
         feature_version=FEATURE_VERSION,
         dataset_hash=dataset_hash,
