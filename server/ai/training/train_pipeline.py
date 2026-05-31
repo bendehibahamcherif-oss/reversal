@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,7 @@ from dataset_utils import (
     time_series_cv,
 )
 from feature_builder import ALL_FEATURE_NAMES, build_features
+from feature_schema import save_schema as _save_feature_schema
 from label_builder import build_p1_labels
 from metrics import evaluate_classification_metrics, format_metrics_summary
 
@@ -56,13 +58,37 @@ INV_LABEL_MAP   = {str(idx): cls for idx, cls in enumerate(LABEL_CLASSES)}
 FEATURE_VERSION      = "p1_v1"
 LABEL_SPEC_VERSION   = "ls_v1"
 
+# ── Hyperparameter search spaces ───────────────────────────────────────────────
+
+XGB_PARAM_GRID = {
+    "max_depth":        [3, 4, 5, 6],
+    "learning_rate":    [0.01, 0.03, 0.05, 0.1],
+    "n_estimators":     [200, 300, 400],
+    "subsample":        [0.7, 0.8, 0.9],
+    "colsample_bytree": [0.6, 0.7, 0.8],
+    "min_child_weight": [3, 5, 7],
+    "reg_lambda":       [0.5, 1.0, 2.0],
+}
+
+LGB_PARAM_GRID = {
+    "max_depth":         [3, 4, 5, 6],
+    "learning_rate":     [0.01, 0.03, 0.05, 0.1],
+    "n_estimators":      [200, 300, 400],
+    "num_leaves":        [15, 31, 63],
+    "subsample":         [0.7, 0.8, 0.9],
+    "colsample_bytree":  [0.6, 0.7, 0.8],
+    "min_child_samples": [10, 20, 30],
+    "reg_lambda":        [0.5, 1.0, 2.0],
+}
+
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
 
 def train_pipeline(
     data_path: str,
     output_dir: str,
-    horizon: int      = 20,
+    symbol: str           = "*",
+    horizon: int          = 20,
     up_threshold: float   = 0.005,
     down_threshold: float = -0.005,
     train_ratio: float    = 0.70,
@@ -140,49 +166,83 @@ def train_pipeline(
         solver="lbfgs",
         multi_class="multinomial",
         C=1.0,
+        class_weight="balanced",
         random_state=seed,
     )
     lr.fit(X_train, y_int_train)
 
-    xgb = XGBClassifier(
+    # ── Hyperparameter search (XGBoost) ───────────────────────────────────────
+    _cv = TimeSeriesSplit(n_splits=5, gap=horizon)
+    try:
+        from sklearn.model_selection import HalvingRandomSearchCV
+        _SearchCV = HalvingRandomSearchCV
+        _search_kwargs_xgb = dict(
+            param_distributions=XGB_PARAM_GRID,
+            n_candidates="exhaust",
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+        _search_kwargs_lgb = dict(
+            param_distributions=LGB_PARAM_GRID,
+            n_candidates="exhaust",
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+    except ImportError:
+        from sklearn.model_selection import RandomizedSearchCV
+        _SearchCV = RandomizedSearchCV
+        _search_kwargs_xgb = dict(
+            param_distributions=XGB_PARAM_GRID,
+            n_iter=20,
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+        _search_kwargs_lgb = dict(
+            param_distributions=LGB_PARAM_GRID,
+            n_iter=20,
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+
+    _xgb_base = XGBClassifier(
         objective="multi:softprob",
         num_class=n_classes,
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=4,
-        min_child_weight=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
         eval_metric="mlogloss",
-        early_stopping_rounds=40,
         random_state=seed,
         verbosity=0,
     )
-    xgb.fit(
-        X_train, y_int_train,
-        eval_set=[(X_val, y_int_val)],
-        verbose=False,
-    )
+    print("[train] Running XGBoost hyperparameter search …")
+    _xgb_search = _SearchCV(_xgb_base, **_search_kwargs_xgb)
+    _xgb_search.fit(X_train, y_int_train)
+    xgb = _xgb_search.best_estimator_
+    best_params_xgb = _xgb_search.best_params_
+    print(f"[train] XGBoost best params: {best_params_xgb}")
 
-    lgb = LGBMClassifier(
+    # ── Hyperparameter search (LightGBM) ──────────────────────────────────────
+    _lgb_base = LGBMClassifier(
         objective="multiclass",
         num_class=n_classes,
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=4,
-        min_child_samples=20,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
         random_state=seed,
         verbose=-1,
     )
-    lgb.fit(
-        X_train, y_int_train,
-        eval_set=[(X_val, y_int_val)],
-        callbacks=[],
-    )
+    print("[train] Running LightGBM hyperparameter search …")
+    _lgb_search = _SearchCV(_lgb_base, **_search_kwargs_lgb)
+    _lgb_search.fit(X_train, y_int_train)
+    lgb = _lgb_search.best_estimator_
+    best_params_lgb = _lgb_search.best_params_
+    print(f"[train] LightGBM best params: {best_params_lgb}")
 
     models = {"logistic": lr, "xgb": xgb, "lgb": lgb}
 
@@ -243,12 +303,16 @@ def train_pipeline(
     git_sha = _get_git_sha()
 
     # ── Build metadata ────────────────────────────────────────────────────────
+    trained_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     metadata = {
         "feature_version":      FEATURE_VERSION,
         "label_spec_version":   LABEL_SPEC_VERSION,
+        "symbol":               symbol,
         "dataset_hash":         dataset_hash,
         "feature_schema_hash":  feature_schema_hash,
         "git_sha":              git_sha,
+        "trained_at":           trained_at,
         "feature_names":        feature_names,
         "label_definition": {
             "horizon":        horizon,
@@ -271,6 +335,8 @@ def train_pipeline(
         "validation_metrics":  {k: _strip_arrays(v) for k, v in val_metrics.items()},
         "test_metrics":        _strip_arrays(test_metrics),
         "feature_importance":  feature_importance,
+        "best_params_xgb":     {k: v for k, v in best_params_xgb.items()},
+        "best_params_lgb":     {k: v for k, v in best_params_lgb.items()},
     }
 
     # ── Save ──────────────────────────────────────────────────────────────────
