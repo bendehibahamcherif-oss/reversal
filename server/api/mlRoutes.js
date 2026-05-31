@@ -1,14 +1,89 @@
-import { Router }    from 'express';
-import { mlWorkerPool }    from '../ml/mlWorkerPool.js';
-import { InferenceError, HARD_TIMEOUT_MS } from '../ml/inferenceWorker.js';
-import { validateRequestBody, SchemaError } from '../ml/mlInferSchema.js';
-import { modelRegistryService } from '../ai/registry/modelRegistryService.js';
-import { logger as _log }  from '../observability/logger.js';
+/**
+ * mlRoutes.js
+ *
+ * Express Router — ML Signal Engine
+ *
+ * Endpoints
+ * ---------
+ *   POST /api/ml/infer/:symbol   — inference via mlWorkerPool (Python subprocess)
+ *   GET  /api/ml/health          — worker pool health check
+ *   GET  /api/ml/model           — champion model metadata (model_metadata.json)
+ *   POST /api/ml/train           — start a background training job
+ *
+ * All endpoints return JSON.
+ * Error shape: { ok: false, error: string, code: string }
+ */
 
-const log      = _log.child({ component: 'mlRoutes' });
+import { Router }        from 'express';
+import { spawn }         from 'node:child_process';
+import { readFile }      from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { randomUUID }    from 'node:crypto';
+
+import { mlWorkerPool }                        from '../ml/mlWorkerPool.js';
+import { InferenceError, HARD_TIMEOUT_MS }     from '../ml/inferenceWorker.js';
+import { validateRequestBody, SchemaError }    from '../ml/mlInferSchema.js';
+import { modelRegistryService }                from '../ai/registry/modelRegistryService.js';
+import { logger as _log }                      from '../observability/logger.js';
+
+const log = _log.child({ component: 'mlRoutes' });
+
+// ── Path resolution ───────────────────────────────────────────────────────────
+
+const __filename  = fileURLToPath(import.meta.url);
+const __dirname   = dirname(__filename);
+
+const MODELS_DIR     = resolve(__dirname, '..', 'ai', 'models');
+const MODEL_METADATA = resolve(MODELS_DIR, 'model_metadata.json');
+const TRAIN_SCRIPT   = resolve(__dirname, '..', 'ai', 'training', 'train_pipeline.py');
+
+// ── In-memory training job registry ──────────────────────────────────────────
+
+/** @type {Map<string, { jobId: string, symbol: string, startedAt: string, pid: number|undefined }>} */
+const _trainingJobs = new Map();
+
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+const SYMBOL_RE = /^[A-Z0-9./^=-]{1,20}$/;
+
+function _validateTrainBody(body) {
+  const errors = [];
+
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    errors.push('Request body must be a JSON object');
+    return { valid: false, errors };
+  }
+
+  if (!body.symbol || typeof body.symbol !== 'string') {
+    errors.push('"symbol" is required and must be a string');
+  } else if (!SYMBOL_RE.test(body.symbol.toUpperCase())) {
+    errors.push(`"symbol" "${body.symbol}" is invalid (1–20 uppercase alphanumeric + ./^=-)`);
+  }
+
+  if (body.horizon !== undefined) {
+    const h = Number(body.horizon);
+    if (!Number.isInteger(h) || h < 1 || h > 1000) {
+      errors.push('"horizon" must be a positive integer between 1 and 1000');
+    }
+  }
+
+  if (body.tauUp !== undefined && (typeof body.tauUp !== 'number' || !Number.isFinite(body.tauUp))) {
+    errors.push('"tauUp" must be a finite number');
+  }
+
+  if (body.tauDown !== undefined && (typeof body.tauDown !== 'number' || !Number.isFinite(body.tauDown))) {
+    errors.push('"tauDown" must be a finite number');
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+// ── Router ────────────────────────────────────────────────────────────────────
+
 const mlRoutes = Router();
 
-// ── POST /api/ml/infer/:symbol ─────────────────────────────────────────────
+// ── POST /api/ml/infer/:symbol ────────────────────────────────────────────────
 //
 // Run inference for a symbol using its champion model (or an explicit modelId).
 //
@@ -35,7 +110,6 @@ const mlRoutes = Router();
 mlRoutes.post('/infer/:symbol', async (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
 
-  // Schema validation
   try {
     validateRequestBody(req.body);
   } catch (err) {
@@ -63,17 +137,17 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
     const result = await mlWorkerPool.infer(symbol, features, { modelId });
 
     return res.json({
-      ok:           true,
+      ok:            true,
       symbol,
-      timeframe:    timeframe || '1m',
-      prediction:   result.prediction,
-      confidence:   result.confidence,
+      timeframe:     timeframe || '1m',
+      prediction:    result.prediction,
+      confidence:    result.confidence,
       probabilities: result.probabilities,
-      modelId:      result.modelId,
-      modelType:    result.modelType,
+      modelId:       result.modelId,
+      modelType:     result.modelType,
       championSince: result.championSince,
-      latencyMs:    result.latencyMs,
-      inferredAt:   result.inferredAt,
+      latencyMs:     result.latencyMs,
+      inferredAt:    result.inferredAt,
     });
   } catch (err) {
     if (err instanceof InferenceError) {
@@ -93,13 +167,13 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
   }
 });
 
-// ── GET /api/ml/health ─────────────────────────────────────────────────────
+// ── GET /api/ml/health ────────────────────────────────────────────────────────
 //
 // Returns worker health: champion count, pool stats, timeout config.
 
 mlRoutes.get('/health', (_req, res) => {
-  const pool     = mlWorkerPool.getStats();
-  const all      = modelRegistryService.list();
+  const pool      = mlWorkerPool.getStats();
+  const all       = modelRegistryService.list();
   const champions = all.filter((m) => m.status === 'champion');
 
   return res.json({
@@ -116,7 +190,155 @@ mlRoutes.get('/health', (_req, res) => {
   });
 });
 
-// ── HTTP status mapping ────────────────────────────────────────────────────
+// ── GET /api/ml/model ─────────────────────────────────────────────────────────
+//
+// Returns model_metadata.json for the champion model, or null if not trained.
+
+mlRoutes.get('/model', async (_req, res) => {
+  try {
+    const raw      = await readFile(MODEL_METADATA, 'utf-8');
+    const metadata = JSON.parse(raw);
+    return res.status(200).json({ ok: true, metadata });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(200).json({
+        ok:       true,
+        metadata: null,
+        message:  'No champion model trained yet',
+      });
+    }
+    log.error('model metadata read error', { error: err.message });
+    return res.status(500).json({
+      ok:    false,
+      error: 'Failed to read model metadata',
+      code:  'MODEL_READ_ERROR',
+    });
+  }
+});
+
+// ── POST /api/ml/train ────────────────────────────────────────────────────────
+//
+// Spawn a background Python training run. Returns immediately with a jobId.
+
+mlRoutes.post('/train', (req, res) => {
+  const { valid, errors } = _validateTrainBody(req.body);
+  if (!valid) {
+    return res.status(400).json({ ok: false, error: errors.join('; '), code: 'INVALID_INPUT', errors });
+  }
+
+  const symbol    = String(req.body.symbol).toUpperCase().trim();
+  const horizon   = req.body.horizon  !== undefined ? Number(req.body.horizon)  : 20;
+  const tauUp     = req.body.tauUp    !== undefined ? Number(req.body.tauUp)    : 0.005;
+  const tauDown   = req.body.tauDown  !== undefined ? Number(req.body.tauDown)  : -0.005;
+  const jobId     = randomUUID();
+  const startedAt = new Date().toISOString();
+
+  const args = [
+    TRAIN_SCRIPT,
+    '--symbol',         symbol,
+    '--horizon',        String(horizon),
+    '--up-threshold',   String(tauUp),
+    '--down-threshold', String(tauDown),
+    '--output',         MODELS_DIR,
+  ];
+
+  let proc;
+  try {
+    proc = spawn('python3', args, {
+      stdio:    ['ignore', 'pipe', 'pipe'],
+      env:      { ...process.env, ML_MODELS_DIR: MODELS_DIR },
+      detached: false,
+    });
+  } catch (spawnErr) {
+    log.error('train spawn failed', { symbol, error: spawnErr.message });
+    return res.status(500).json({
+      ok:    false,
+      error: `Failed to start training process: ${spawnErr.message}`,
+      code:  'SPAWN_ERROR',
+    });
+  }
+
+  _trainingJobs.set(jobId, { jobId, symbol, startedAt, pid: proc.pid });
+
+  proc.stdout.on('data', (chunk) => {
+    for (const line of chunk.toString().split('\n')) {
+      if (line.trim()) log.info(`[train:${jobId}:${symbol}] ${line}`);
+    }
+  });
+  proc.stderr.on('data', (chunk) => {
+    for (const line of chunk.toString().split('\n')) {
+      if (line.trim()) log.warn(`[train:${jobId}:${symbol}] ${line}`);
+    }
+  });
+  proc.on('exit', (code, signal) => {
+    log.info('train job finished', { jobId, symbol, code, signal });
+    _trainingJobs.delete(jobId);
+  });
+  proc.on('error', (err) => {
+    log.error('train job error', { jobId, symbol, error: err.message });
+    _trainingJobs.delete(jobId);
+  });
+
+  log.info('train started', { jobId, symbol, pid: proc.pid, horizon });
+
+  return res.status(200).json({ ok: true, jobId, symbol, message: 'Training started', startedAt });
+});
+
+// ── GET /api/ml/training-runs ─────────────────────────────────────────────────
+//
+// Lists active (in-flight) training jobs.
+
+mlRoutes.get('/training-runs', (_req, res) => {
+  const jobs = Array.from(_trainingJobs.values()).map((j) => ({
+    jobId:     j.jobId,
+    symbol:    j.symbol,
+    startedAt: j.startedAt,
+    pid:       j.pid ?? null,
+    status:    'running',
+  }));
+  return res.status(200).json({ ok: true, activeJobs: jobs, count: jobs.length });
+});
+
+// ── GET /api/ml/model-card ────────────────────────────────────────────────────
+
+const MODEL_CARD = resolve(MODELS_DIR, 'model_card.md');
+
+mlRoutes.get('/model-card', async (req, res) => {
+  try {
+    const content = await readFile(MODEL_CARD, 'utf-8');
+    if (req.headers?.accept?.includes('application/json')) {
+      return res.status(200).json({ ok: true, content });
+    }
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    return res.status(200).send(content);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(200).json({ ok: true, content: null, message: 'No model card available yet' });
+    }
+    log.error('model card read error', { error: err.message });
+    return res.status(500).json({ ok: false, error: 'Failed to read model card', code: 'MODEL_CARD_READ_ERROR' });
+  }
+});
+
+// ── GET /api/ml/schema ────────────────────────────────────────────────────────
+
+const FEATURE_SCHEMA_PATH = resolve(MODELS_DIR, 'feature_schema.json');
+
+mlRoutes.get('/schema', async (_req, res) => {
+  try {
+    const raw    = await readFile(FEATURE_SCHEMA_PATH, 'utf-8');
+    const schema = JSON.parse(raw);
+    return res.status(200).json({ ok: true, schema });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(200).json({ ok: true, schema: null, message: 'Feature schema not available yet' });
+    }
+    log.error('feature schema read error', { error: err.message });
+    return res.status(500).json({ ok: false, error: 'Failed to read feature schema', code: 'SCHEMA_READ_ERROR' });
+  }
+});
+
+// ── HTTP status mapping ───────────────────────────────────────────────────────
 
 function _codeToStatus(code) {
   switch (code) {

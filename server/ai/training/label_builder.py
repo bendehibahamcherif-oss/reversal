@@ -118,6 +118,86 @@ def create_labels(
     return series
 
 
+# ── P1 multiclass labels: SHORT(0) / NEUTRAL(1) / LONG(2) ─────────────────────
+
+SHORT      = 0
+NEUTRAL_P1 = 1
+LONG       = 2
+
+
+def build_p1_labels(
+    df: pd.DataFrame,
+    horizon: int,
+    tau_up: float   = 0.003,
+    tau_down: float = -0.003,
+    open_col: str   = "open",
+    close_col: str  = "close",
+) -> pd.Series:
+    """
+    Build LONG(2) / NEUTRAL(1) / SHORT(0) labels for the P1 ML Signal Engine spec.
+
+    Entry/exit (no lookahead):
+        entry_price = open[t + 1]         (next bar's open — the realistic fill)
+        exit_price  = close[t + horizon]
+
+    net_return = (exit_price - entry_price) / entry_price
+
+    Classes:
+        LONG    = 2.0   if net_return >= tau_up
+        SHORT   = 0.0   if net_return <= tau_down
+        NEUTRAL = 1.0   otherwise
+        NaN           for last *horizon* rows (no complete future window)
+
+    Parameters
+    ----------
+    df        : DataFrame sorted ascending, with *open_col* and *close_col*.
+    horizon   : Bars ahead for exit price (>= 1).
+    tau_up    : Minimum return for LONG (e.g. 0.003 → +0.3 %).
+    tau_down  : Maximum return for SHORT (e.g. -0.003 → -0.3 %).
+    open_col  : Column name for open price.
+    close_col : Column name for close price.
+
+    Returns
+    -------
+    pd.Series of dtype float, same index as *df*.
+    """
+    if horizon < 1:
+        raise ValueError(f"horizon must be >= 1, got {horizon}")
+    if tau_up <= 0:
+        raise ValueError(f"tau_up must be > 0, got {tau_up}")
+    if tau_down >= 0:
+        raise ValueError(f"tau_down must be < 0, got {tau_down}")
+    if open_col not in df.columns:
+        raise KeyError(f"open_col '{open_col}' not found in DataFrame")
+    if close_col not in df.columns:
+        raise KeyError(f"close_col '{close_col}' not found in DataFrame")
+
+    opens  = df[open_col].to_numpy(dtype=float)
+    closes = df[close_col].to_numpy(dtype=float)
+    n      = len(df)
+    labels = np.full(n, np.nan)
+
+    for t in range(n - horizon):
+        entry = opens[t + 1] if (t + 1) < n else np.nan
+        exit_ = closes[t + horizon]
+
+        if not (np.isfinite(entry) and np.isfinite(exit_)) or entry == 0:
+            labels[t] = float(NEUTRAL_P1)
+            continue
+
+        net_ret = (exit_ - entry) / entry
+
+        if net_ret >= tau_up:
+            labels[t] = float(LONG)
+        elif net_ret <= tau_down:
+            labels[t] = float(SHORT)
+        else:
+            labels[t] = float(NEUTRAL_P1)
+
+    labels[n - horizon:] = np.nan
+    return pd.Series(labels, index=df.index, dtype=float)
+
+
 def create_triple_barrier_labels(
     df: pd.DataFrame,
     horizon: int,

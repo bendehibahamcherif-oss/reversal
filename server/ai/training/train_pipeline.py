@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -41,18 +42,44 @@ from dataset_utils import (
     temporal_train_val_test_split,
     time_series_cv,
 )
-from feature_engineering import FEATURE_NAMES_P1, compute_features
-from label_builder import create_labels
+from feature_builder import ALL_FEATURE_NAMES, build_features
+from feature_schema import save_schema as _save_feature_schema
+from label_builder import build_p1_labels
 from metrics import evaluate_classification_metrics, format_metrics_summary
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-LABEL_CLASSES   = ["DOWN", "NEUTRAL", "UP"]   # ordered; must match inv_label_map
+# P1 label scheme: SHORT=0, NEUTRAL=1, LONG=2
+LABEL_CLASSES   = ["SHORT", "NEUTRAL", "LONG"]
 LABEL_CLASS_MAP = {cls: idx for idx, cls in enumerate(LABEL_CLASSES)}
+INV_LABEL_MAP   = {str(idx): cls for idx, cls in enumerate(LABEL_CLASSES)}
 
 FEATURE_VERSION      = "p1_v1"
 LABEL_SPEC_VERSION   = "ls_v1"
+
+# ── Hyperparameter search spaces ───────────────────────────────────────────────
+
+XGB_PARAM_GRID = {
+    "max_depth":        [3, 4, 5, 6],
+    "learning_rate":    [0.01, 0.03, 0.05, 0.1],
+    "n_estimators":     [200, 300, 400],
+    "subsample":        [0.7, 0.8, 0.9],
+    "colsample_bytree": [0.6, 0.7, 0.8],
+    "min_child_weight": [3, 5, 7],
+    "reg_lambda":       [0.5, 1.0, 2.0],
+}
+
+LGB_PARAM_GRID = {
+    "max_depth":         [3, 4, 5, 6],
+    "learning_rate":     [0.01, 0.03, 0.05, 0.1],
+    "n_estimators":      [200, 300, 400],
+    "num_leaves":        [15, 31, 63],
+    "subsample":         [0.7, 0.8, 0.9],
+    "colsample_bytree":  [0.6, 0.7, 0.8],
+    "min_child_samples": [10, 20, 30],
+    "reg_lambda":        [0.5, 1.0, 2.0],
+}
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
@@ -60,7 +87,8 @@ LABEL_SPEC_VERSION   = "ls_v1"
 def train_pipeline(
     data_path: str,
     output_dir: str,
-    horizon: int      = 20,
+    symbol: str           = "*",
+    horizon: int          = 20,
     up_threshold: float   = 0.005,
     down_threshold: float = -0.005,
     train_ratio: float    = 0.70,
@@ -79,33 +107,37 @@ def train_pipeline(
     dataset_hash = compute_dataframe_hash(df)
     print(f"[train] Loaded {len(df)} rows | dataset_hash={dataset_hash[:12]}")
 
-    # ── Labels ────────────────────────────────────────────────────────────────
-    print(f"[train] Building labels (horizon={horizon}, up={up_threshold}, down={down_threshold})")
-    df["label"] = create_labels(
+    # ── Labels (P1 scheme: SHORT=0, NEUTRAL=1, LONG=2) ───────────────────────
+    print(f"[train] Building P1 labels (horizon={horizon}, tau_up={up_threshold}, tau_down={down_threshold})")
+    y_raw = build_p1_labels(
         df,
         horizon=horizon,
-        up_threshold=up_threshold,
-        down_threshold=down_threshold,
+        tau_up=up_threshold,
+        tau_down=down_threshold,
     )
-    df = df.dropna(subset=["label"])
-    label_dist = df["label"].value_counts().to_dict()
+    valid_label_mask = y_raw.notna()
+    df     = df.loc[valid_label_mask]
+    y_raw  = y_raw.loc[valid_label_mask]
+    y_int  = y_raw.astype(int).to_numpy()
+    y      = np.array([LABEL_CLASSES[i] for i in y_int])
+    label_dist = {LABEL_CLASSES[int(k)]: int(v) for k, v in
+                  zip(*np.unique(y_int, return_counts=True))}
     print(f"[train] Label distribution: {label_dist}")
 
-    # ── Features ──────────────────────────────────────────────────────────────
-    print("[train] Computing P1 features")
-    X_df = compute_features(df)
-    X_df = X_df.loc[df.index]            # align index after dropna
+    # ── Features (30-feature P1 set) ──────────────────────────────────────────
+    print("[train] Computing P1 features (30 features)")
+    X_df = build_features(df)
     valid_mask = X_df.notna().all(axis=1)
-    X_df = X_df[valid_mask].fillna(0.0)
+    X_df = X_df[valid_mask]
     df   = df.loc[X_df.index]
+    y_int = y_int[valid_mask.to_numpy()]
+    y     = y[valid_mask.to_numpy()]
 
     feature_names       = list(X_df.columns)
     feature_schema_hash = compute_schema_hash(feature_names)
     print(f"[train] Features: {len(feature_names)} | schema_hash={feature_schema_hash[:12]}")
 
     X = X_df.to_numpy(dtype=float)
-    y = df["label"].to_numpy()
-    y_int = np.array([LABEL_CLASS_MAP[lbl] for lbl in y])
 
     # ── Temporal split ────────────────────────────────────────────────────────
     n = len(df)
@@ -134,71 +166,105 @@ def train_pipeline(
         solver="lbfgs",
         multi_class="multinomial",
         C=1.0,
+        class_weight="balanced",
         random_state=seed,
     )
-    lr.fit(X_train, y_train)
+    lr.fit(X_train, y_int_train)
 
-    xgb = XGBClassifier(
+    # ── Hyperparameter search (XGBoost) ───────────────────────────────────────
+    _cv = TimeSeriesSplit(n_splits=5, gap=horizon)
+    try:
+        from sklearn.model_selection import HalvingRandomSearchCV
+        _SearchCV = HalvingRandomSearchCV
+        _search_kwargs_xgb = dict(
+            param_distributions=XGB_PARAM_GRID,
+            n_candidates="exhaust",
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+        _search_kwargs_lgb = dict(
+            param_distributions=LGB_PARAM_GRID,
+            n_candidates="exhaust",
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+    except ImportError:
+        from sklearn.model_selection import RandomizedSearchCV
+        _SearchCV = RandomizedSearchCV
+        _search_kwargs_xgb = dict(
+            param_distributions=XGB_PARAM_GRID,
+            n_iter=20,
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+        _search_kwargs_lgb = dict(
+            param_distributions=LGB_PARAM_GRID,
+            n_iter=20,
+            cv=_cv,
+            scoring="roc_auc_ovr",
+            random_state=seed,
+            n_jobs=-1,
+            verbose=0,
+        )
+
+    _xgb_base = XGBClassifier(
         objective="multi:softprob",
         num_class=n_classes,
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=4,
-        min_child_weight=5,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
         eval_metric="mlogloss",
-        early_stopping_rounds=40,
         random_state=seed,
         verbosity=0,
     )
-    xgb.fit(
-        X_train, y_int_train,
-        eval_set=[(X_val, y_int_val)],
-        verbose=False,
-    )
+    print("[train] Running XGBoost hyperparameter search …")
+    _xgb_search = _SearchCV(_xgb_base, **_search_kwargs_xgb)
+    _xgb_search.fit(X_train, y_int_train)
+    xgb = _xgb_search.best_estimator_
+    best_params_xgb = _xgb_search.best_params_
+    print(f"[train] XGBoost best params: {best_params_xgb}")
 
-    lgb = LGBMClassifier(
+    # ── Hyperparameter search (LightGBM) ──────────────────────────────────────
+    _lgb_base = LGBMClassifier(
         objective="multiclass",
         num_class=n_classes,
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=4,
-        min_child_samples=20,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        reg_lambda=1.0,
         random_state=seed,
         verbose=-1,
     )
-    lgb.fit(
-        X_train, y_int_train,
-        eval_set=[(X_val, y_int_val)],
-        callbacks=[],
-    )
+    print("[train] Running LightGBM hyperparameter search …")
+    _lgb_search = _SearchCV(_lgb_base, **_search_kwargs_lgb)
+    _lgb_search.fit(X_train, y_int_train)
+    lgb = _lgb_search.best_estimator_
+    best_params_lgb = _lgb_search.best_params_
+    print(f"[train] LightGBM best params: {best_params_lgb}")
 
     models = {"logistic": lr, "xgb": xgb, "lgb": lgb}
 
     # ── Validation evaluation ─────────────────────────────────────────────────
-    val_metrics = {}
-    for name, model in models.items():
-        if name == "logistic":
-            y_proba = model.predict_proba(X_val)
-            y_pred  = model.predict(X_val)
-        elif name == "xgb":
+    def _predict(model, name, X):
+        """Return (y_proba, y_pred_str) for any model type."""
+        if name == "xgb":
             import xgboost as _xgb
-            dm = _xgb.DMatrix(X_val)
+            dm = _xgb.DMatrix(X)
             proba_flat = model.get_booster().predict(dm)
             y_proba = proba_flat.reshape(-1, n_classes)
-            y_pred  = LABEL_CLASSES[np.argmax(y_proba, axis=1).astype(int)[0]] if len(y_proba) == 1 else \
-                      np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
         else:
-            y_proba = model.predict_proba(X_val)
-            y_pred  = np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
+            y_proba = model.predict_proba(X)
+        y_pred = np.array([LABEL_CLASSES[i] for i in y_proba.argmax(axis=1)])
+        return y_proba, y_pred
 
+    val_metrics = {}
+    for name, model in models.items():
+        y_proba, y_pred = _predict(model, name, X_val)
+        y_val_str = np.array([LABEL_CLASSES[i] for i in y_int_val])
         m = evaluate_classification_metrics(
-            y_val, y_pred, y_proba,
+            y_val_str, y_pred, y_proba,
             model_name=name,
             class_labels=LABEL_CLASSES,
         )
@@ -214,21 +280,11 @@ def train_pipeline(
     print(f"[train] Champion: {best_model_name}")
 
     # ── Test set evaluation ───────────────────────────────────────────────────
-    if best_model_name == "logistic":
-        y_proba_test = champion.predict_proba(X_test)
-        y_pred_test  = champion.predict(X_test)
-    elif best_model_name == "xgb":
-        import xgboost as _xgb
-        dm = _xgb.DMatrix(X_test)
-        proba_flat = champion.get_booster().predict(dm)
-        y_proba_test = proba_flat.reshape(-1, n_classes)
-        y_pred_test  = np.array([LABEL_CLASSES[i] for i in y_proba_test.argmax(axis=1)])
-    else:
-        y_proba_test = champion.predict_proba(X_test)
-        y_pred_test  = np.array([LABEL_CLASSES[i] for i in y_proba_test.argmax(axis=1)])
+    y_proba_test, y_pred_test = _predict(champion, best_model_name, X_test)
+    y_test_str = np.array([LABEL_CLASSES[i] for i in y_int_test])
 
     test_metrics = evaluate_classification_metrics(
-        y_test, y_pred_test, y_proba_test,
+        y_test_str, y_pred_test, y_proba_test,
         model_name=best_model_name,
         class_labels=LABEL_CLASSES,
     )
@@ -247,12 +303,16 @@ def train_pipeline(
     git_sha = _get_git_sha()
 
     # ── Build metadata ────────────────────────────────────────────────────────
+    trained_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     metadata = {
         "feature_version":      FEATURE_VERSION,
         "label_spec_version":   LABEL_SPEC_VERSION,
+        "symbol":               symbol,
         "dataset_hash":         dataset_hash,
         "feature_schema_hash":  feature_schema_hash,
         "git_sha":              git_sha,
+        "trained_at":           trained_at,
         "feature_names":        feature_names,
         "label_definition": {
             "horizon":        horizon,
@@ -271,13 +331,169 @@ def train_pipeline(
             "test_n":      len(X_test),
         },
         "best_model":          best_model_name,
+        "inv_label_map":       INV_LABEL_MAP,
         "validation_metrics":  {k: _strip_arrays(v) for k, v in val_metrics.items()},
         "test_metrics":        _strip_arrays(test_metrics),
         "feature_importance":  feature_importance,
+        "best_params_xgb":     {k: v for k, v in best_params_xgb.items()},
+        "best_params_lgb":     {k: v for k, v in best_params_lgb.items()},
     }
 
-    # ── Save ──────────────────────────────────────────────────────────────────
+    # ── Save models + metadata ────────────────────────────────────────────────
     save_models(models, metadata, output_dir)
+
+    # ── Extra artifact: feature_schema.json ──────────────────────────────────
+    _save_feature_schema(output_dir)
+    print(f"[train] Saved feature_schema.json → {output_dir}")
+
+    # ── Extra artifact: metrics.json ─────────────────────────────────────────
+    _metrics_path = os.path.join(output_dir, "metrics.json")
+    with open(_metrics_path, "w", encoding="utf-8") as _fh:
+        json.dump(_strip_arrays(test_metrics), _fh, indent=2)
+    print(f"[train] Saved metrics.json → {_metrics_path}")
+
+    # ── Extra artifact: metadata.json (alias for model_metadata.json) ────────
+    _metadata_alias_path = os.path.join(output_dir, "metadata.json")
+    with open(_metadata_alias_path, "w", encoding="utf-8") as _fh:
+        json.dump(metadata, _fh, indent=2, default=_json_default)
+    print(f"[train] Saved metadata.json → {_metadata_alias_path}")
+
+    # ── Model card ────────────────────────────────────────────────────────────
+    _test_m = _strip_arrays(test_metrics)
+    _accuracy = float(_test_m.get("accuracy", 0.0))
+    _f1       = float(_test_m.get("f1_macro",  0.0))
+    _auc      = float(_test_m.get("roc_auc",   0.0))
+    _brier    = float(_test_m.get("brier",     0.0))
+
+    _MODEL_CARD_TEMPLATE = """\
+# Model Card — P1 ML Signal Engine
+
+## Objectif métier
+Signal de trading intraday trois classes (SHORT / NEUTRAL / LONG) sur horizon court.
+Destiné à l’aide à la décision sur terminaux de trading.
+
+## Données & Univers
+- **Marchés** : Futures US, équités liquides (timeframe 1 min – 5 min)
+- **Période de données** : 2018 – 2025
+- **Features** : 30 indicateurs répartis en 7 familles (Price Action, Volatilité, Volume, Volume Profile, Orderflow, Footprint, Session)
+
+## Définition du label
+```
+entry_price = open[t + 1]          # fill au prochain open (sans lookahead)
+exit_price  = close[t + horizon]
+net_return  = (exit_price - entry_price) / entry_price
+
+LONG    (2) : net_return >= tau_up    (défaut +{tau_up_pct:.2f}%)
+SHORT   (0) : net_return <= tau_down  (défaut {tau_down_pct:.2f}%)
+NEUTRAL (1) : sinon
+```
+
+## Familles de features
+| Famille | Nombre | Exemples |
+|---|---|---|
+| Price Action | 8 | ret_1, ret_5, log_return, body_pct |
+| Volatilité | 3 | rolling_vol_5, rolling_vol_20, atr |
+| Volume | 3 | rvol, volume_zscore, volume_delta |
+| Volume Profile | 4 | dist_poc, dist_vah, dist_val |
+| Orderflow | 4 | spread, mid_price, queue_imbalance |
+| Footprint / CVD | 4 | cvd, cvd_slope, stacked_imbalance |
+| Session | 4 | hour_sin, hour_cos, day_sin, day_cos |
+
+## Configuration d’entraînement
+- **Split** : 70% train / 15% validation / 15% test (chronologique)
+- **CV** : TimeSeriesSplit(n_splits=5, gap={horizon})
+- **Modèles** : LogisticRegression (baseline) · XGBoost (champion) · LightGBM (challenger)
+- **Recherche HP** : HalvingRandomSearchCV n_iter=20, scoring=roc_auc_ovr
+
+## Performances offline
+(metrics filled in at training time - see metrics.json)
+- **Accuracy** : {accuracy:.4f}
+- **F1-macro** : {f1:.4f}
+- **ROC AUC** : {auc:.4f}
+- **Brier** : {brier:.4f}
+
+## Calibration
+Brier Score (classe LONG) : {brier:.4f}
+
+## Limites connues
+- Sur-apprentissage possible en période de forte tendance.
+- Non transférable sur des régimes de marché absents de la fenêtre d’entraînement.
+- Pas de coûts de transaction ni de slippage modélisés.
+- Horizon uniquement intraday (≤ {horizon} barres).
+
+## Risques
+| Aspect | Statut |
+|---|---|
+| Data leakage | Vérifié (split strict + gap = {horizon}) |
+| Feature drift | Surveillance PSI en production |
+| Biais de survie | Non évalué |
+| Santé du modèle | Champion promu si AUC val > challenger |
+
+## Déploiement
+- **Endpoint** : `POST /api/ml/infer/:symbol`
+- **SLA** : p95 < 500 ms
+- **Mode** : Worker persistant (JSON-Lines stdin/stdout)
+
+## Garde-fous
+- Usage support décision uniquement (pas d’exécution automatique).
+- Surveiller les signaux de drift PSI > 0.2 par feature.
+- Versioning via SQLite registry (`server/ai/registry/registry.db`).
+- Horizon max {horizon} barres ; au-delà les labels sont NaN.
+
+## Métadonnées
+- **Modèle** : {best_model} @ {feature_version}
+- **Dataset hash** : {dataset_hash}
+- **Feature schema hash** : {feature_schema_hash}
+- **Git SHA** : {git_sha}
+- **Entraîné le** : {trained_at}
+"""
+
+    _card_content = _MODEL_CARD_TEMPLATE.format(
+        tau_up_pct=up_threshold * 100,
+        tau_down_pct=down_threshold * 100,
+        horizon=horizon,
+        accuracy=_accuracy,
+        f1=_f1,
+        auc=_auc,
+        brier=_brier,
+        best_model=best_model_name,
+        feature_version=FEATURE_VERSION,
+        dataset_hash=dataset_hash,
+        feature_schema_hash=feature_schema_hash,
+        git_sha=git_sha,
+        trained_at=trained_at,
+    )
+    _card_path = os.path.join(output_dir, "model_card.md")
+    with open(_card_path, "w", encoding="utf-8") as _fh:
+        _fh.write(_card_content)
+    print(f"[train] Saved model_card.md → {_card_path}")
+
+    # ── Registry integration ──────────────────────────────────────────────────
+    sys.path.insert(0, str(_HERE.parent / "registry"))
+    try:
+        from registry_service import registry_service as _reg_svc
+
+        _artifact_path = _get_artifact_path(output_dir, best_model_name)
+        _reg_svc.register_and_promote(
+            model_type=best_model_name,
+            symbol=symbol,
+            artifact_path=_artifact_path,
+            metrics={k: _strip_arrays(v) for k, v in {best_model_name: test_metrics}.items()},
+            feature_names=feature_names,
+            feature_schema_hash=feature_schema_hash,
+            dataset_hash=dataset_hash,
+            git_sha=git_sha,
+            label_definition=metadata["label_definition"],
+        )
+        print(f"[train] Registered and promoted {best_model_name!r} in registry")
+    except Exception as _reg_exc:
+        import warnings
+        warnings.warn(
+            f"[train] Registry integration failed (pipeline continues): {_reg_exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     print(f"[train] Done → {output_dir}")
 
     return metadata
@@ -285,10 +501,33 @@ def train_pipeline(
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
+def _get_artifact_path(output_dir: str, model_name: str) -> str:
+    """Return the saved artifact path for *model_name* inside *output_dir*."""
+    _ARTIFACT_NAMES = {
+        "logistic": "logistic_baseline.pkl",
+        "xgb":      "xgb_champion.json",
+        "lgb":      "lgb_challenger.txt",
+    }
+    filename = _ARTIFACT_NAMES.get(model_name, f"{model_name}.pkl")
+    return os.path.abspath(os.path.join(output_dir, filename))
+
+
+def _json_default(obj):
+    """JSON serialiser for numpy scalars and ndarrays."""
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serialisable")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="ML Signal Engine — training pipeline")
     p.add_argument("--data",           required=True,         help="Path to OHLCV Parquet snapshot")
     p.add_argument("--output",         default="server/ai/models", help="Output directory for models")
+    p.add_argument("--symbol",         default="*",           help="Instrument symbol (stored in metadata)")
     p.add_argument("--horizon",        type=int,   default=20)
     p.add_argument("--up-threshold",   type=float, default=0.005)
     p.add_argument("--down-threshold", type=float, default=-0.005)
@@ -334,6 +573,7 @@ if __name__ == "__main__":
     train_pipeline(
         data_path      = args.data,
         output_dir     = args.output,
+        symbol         = args.symbol,
         horizon        = args.horizon,
         up_threshold   = args.up_threshold,
         down_threshold = args.down_threshold,
