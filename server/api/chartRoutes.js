@@ -5,28 +5,56 @@ import { footprintEngine } from '../charting/footprintEngine.js';
 
 const chartRoutes = Router();
 
+// ── Candles ──────────────────────────────────────────────────────────────────
+
 chartRoutes.get('/candles/:symbol', async (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
-  const limit = Number(req.query?.limit || 200);
-  return res.json({ success: true, ...await chartDataEngine.getCandles(req.params.symbol, timeframe, limit) });
+  const limit     = Number(req.query?.limit || 200);
+  return res.json({
+    success: true,
+    ...await chartDataEngine.getCandles(req.params.symbol, timeframe, limit),
+  });
 });
 
+// ── Indicators ───────────────────────────────────────────────────────────────
+
 chartRoutes.get('/indicators/:symbol', async (req, res) => {
-  const timeframe = req.query?.timeframe || '1m';
-  const indicators = String(req.query?.indicators || 'vwap,ema9,ema20,rsi14,volume_avg,volume_zscore').split(',');
-  return res.json({ success: true, ...await chartDataEngine.getIndicators(req.params.symbol, timeframe, indicators) });
+  const timeframe  = req.query?.timeframe || '1m';
+  const indicators = String(
+    req.query?.indicators || 'vwap,ema9,ema20,rsi14,volume_avg,volume_zscore',
+  ).split(',');
+  return res.json({
+    success: true,
+    ...await chartDataEngine.getIndicators(req.params.symbol, timeframe, indicators),
+  });
 });
+
+// ── Overlays ─────────────────────────────────────────────────────────────────
 
 chartRoutes.get('/overlays/:symbol', (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
-  return res.json({ success: true, ...chartDataEngine.getOverlays(req.params.symbol, timeframe) });
+  return res.json({
+    success: true,
+    ...chartDataEngine.getOverlays(req.params.symbol, timeframe),
+  });
 });
 
-chartRoutes.get('/orderflow/:symbol', (req, res) => res.json({ success: true, ...chartDataEngine.getOrderflow(req.params.symbol) }));
+// ── Orderflow ────────────────────────────────────────────────────────────────
+
+chartRoutes.get('/orderflow/:symbol', (req, res) => {
+  return res.json({
+    success: true,
+    ...chartDataEngine.getOrderflow(req.params.symbol),
+  });
+});
+
+// ── Full chart payload ────────────────────────────────────────────────────────
+
 chartRoutes.get('/payload/:symbol', async (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
-  const limit = Number(req.query?.limit || 200);
-  const payload = await chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit);
+  const limit     = Number(req.query?.limit || 200);
+  const payload   = await chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit);
+
   const indicatorsObj = {};
   if (Array.isArray(payload.indicators)) {
     for (const ind of payload.indicators) {
@@ -36,6 +64,7 @@ chartRoutes.get('/payload/:symbol', async (req, res) => {
   } else if (payload.indicators && typeof payload.indicators === 'object') {
     Object.assign(indicatorsObj, payload.indicators);
   }
+
   return res.json({ success: true, ...payload, indicators: indicatorsObj });
 });
 
