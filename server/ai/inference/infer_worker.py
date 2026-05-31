@@ -47,6 +47,62 @@ from typing import Any
 import numpy as np
 
 
+# ── Resource limits ────────────────────────────────────────────────────────────
+
+
+def _apply_resource_limits() -> None:
+    """
+    Optionally restrict CPU time and virtual address space for this process.
+
+    Limits are opt-in via environment variables — nothing is applied unless
+    the variables are explicitly set.  This avoids crashing Python import on
+    systems where virtual address space is legitimately large (shared libs,
+    memory-mapped files).
+
+      ML_WORKER_CPU_LIMIT_S   — CPU-time soft+hard limit in seconds
+                                (e.g. "60").  Not applied if unset.
+      ML_WORKER_MEM_LIMIT_MB  — Virtual address space cap in MB
+                                (e.g. "2048").  Not applied if unset.
+                                Tip: set this to at least 2× the model size
+                                plus Python overhead (~500 MB) to avoid
+                                import failures.
+
+    Linux / macOS only.  Silently skipped on Windows or when the resource
+    module is unavailable (e.g. restricted containers).
+    """
+    try:
+        import resource  # noqa: PLC0415  (Unix-only)
+
+        cpu_env = os.environ.get("ML_WORKER_CPU_LIMIT_S")
+        mem_env = os.environ.get("ML_WORKER_MEM_LIMIT_MB")
+
+        if cpu_env is not None:
+            cpu_s = int(cpu_env)
+            # RLIMIT_CPU: SIGXCPU at soft limit, SIGKILL at hard limit
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s))
+            print(f"[infer_worker] CPU limit set: {cpu_s}s", file=sys.stderr)
+
+        if mem_env is not None:
+            mem_b = int(mem_env) * 1024 * 1024
+            # RLIMIT_AS: total virtual address space
+            resource.setrlimit(resource.RLIMIT_AS, (mem_b, mem_b))
+            print(f"[infer_worker] RAM limit set: {mem_env}MB", file=sys.stderr)
+
+        if cpu_env is None and mem_env is None:
+            print(
+                "[infer_worker] Resource limits not configured "
+                "(set ML_WORKER_CPU_LIMIT_S / ML_WORKER_MEM_LIMIT_MB to enable)",
+                file=sys.stderr,
+            )
+
+    except (ImportError, AttributeError) as exc:
+        # Windows or stripped environment — skip silently
+        print(f"[infer_worker] resource module unavailable: {exc}", file=sys.stderr)
+    except (ValueError, OSError) as exc:
+        # Container already enforces tighter limits, or setrlimit denied
+        print(f"[infer_worker] Resource limits not applied: {exc}", file=sys.stderr)
+
+
 # ── Validation constants ───────────────────────────────────────────────────────
 
 _FEATURE_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,64}$")
@@ -245,6 +301,9 @@ def _write(obj: dict) -> None:
 
 def main() -> None:
     print("[infer_worker] Starting up …", file=sys.stderr)
+
+    # Apply OS-level resource limits before model load so they cover all allocations
+    _apply_resource_limits()
 
     try:
         model_type, model, metadata = _load_champion()
