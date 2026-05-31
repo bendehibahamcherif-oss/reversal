@@ -11,6 +11,52 @@ import pandas as pd
 from typing import Optional
 
 
+# ── Numerical signal labels (+1 / -1 / 0 / NaN) ───────────────────────────────
+
+def make_labels(df: pd.DataFrame, horizon: int, price_col: str = "close") -> pd.Series:
+    """
+    Binary signal labels aligned to df.index.
+
+    For each row t the label is:
+        +1  if close[t + horizon] > close[t]
+        -1  if close[t + horizon] < close[t]
+         0  if equal
+        NaN for the last *horizon* rows (no future data)
+
+    Parameters
+    ----------
+    df        : DataFrame with a numeric *price_col* column, sorted ascending.
+    horizon   : Look-ahead bars (>= 1).
+    price_col : Column to use for the price comparison.
+
+    Returns
+    -------
+    pd.Series of dtype float (NaN-compatible), same index as *df*.
+    """
+    if horizon < 1:
+        raise ValueError(f"horizon must be >= 1, got {horizon}")
+    if price_col not in df.columns:
+        raise KeyError(f"price_col '{price_col}' not found in DataFrame")
+
+    prices  = df[price_col].to_numpy(dtype=float)
+    n       = len(prices)
+    labels  = np.full(n, np.nan)
+
+    for t in range(n - horizon):
+        p0 = prices[t]
+        pH = prices[t + horizon]
+        if not (np.isfinite(p0) and np.isfinite(pH)) or p0 == 0:
+            continue
+        if pH > p0:
+            labels[t] = 1.0
+        elif pH < p0:
+            labels[t] = -1.0
+        else:
+            labels[t] = 0.0
+
+    return pd.Series(labels, index=df.index, dtype=float)
+
+
 # Class constants (kept in sync with train_pipeline LABEL_CLASSES)
 LABEL_UP      = "UP"
 LABEL_DOWN    = "DOWN"
