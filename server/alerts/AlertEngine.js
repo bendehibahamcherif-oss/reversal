@@ -26,8 +26,11 @@ class AlertEngine {
     if (this._running) return;
     this._running     = true;
     this._stats.startedAt = new Date().toISOString();
-    setTimeout(() => this._evaluateCycle(), STARTUP_DELAY_MS);
-    this._timer = setInterval(() => this._evaluateCycle(), EVAL_INTERVAL_MS);
+    const _safeEval = () => this._evaluateCycle().catch((e) =>
+      console.error('[AlertEngine] unhandled cycle error', e?.message),
+    );
+    setTimeout(_safeEval, STARTUP_DELAY_MS);
+    this._timer = setInterval(_safeEval, EVAL_INTERVAL_MS);
     console.info('[AlertEngine] started', { intervalMs: EVAL_INTERVAL_MS });
   }
 
