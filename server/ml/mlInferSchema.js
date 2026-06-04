@@ -10,7 +10,11 @@
 // Output schema (Python infer.py stdout):
 //   { ok: true, prediction: enum, confidence: [0,1], probabilities: object }
 
-export const VALID_PREDICTIONS = Object.freeze(['positive', 'negative', 'neutral']);
+// Phase 9 labels (SHORT/NEUTRAL/LONG) + legacy labels for backward compat
+export const VALID_PREDICTIONS = Object.freeze([
+  'SHORT', 'NEUTRAL', 'LONG',
+  'positive', 'negative', 'neutral',
+]);
 
 export class SchemaError extends Error {
   constructor(message, errors = []) {

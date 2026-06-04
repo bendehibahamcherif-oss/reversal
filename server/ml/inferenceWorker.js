@@ -64,12 +64,12 @@ export async function runInferenceWorker({ symbol, features, modelId }) {
     throw new InferenceError('NO_CHAMPION', `No champion model for ${sym}`, { symbol: sym });
   }
 
-  // 2. Load artifact
-  const artifactB64 = modelRegistryService.loadArtifact(champion.modelId);
-  if (!artifactB64) {
+  // 2. Resolve artifact path (never send base64 bytes — path-based loading only)
+  const artifactPath = champion.artifactPath;
+  if (!artifactPath) {
     throw new InferenceError(
       'ARTIFACT_NOT_FOUND',
-      `Artifact missing for model ${champion.modelId}`,
+      `No artifact path for model ${champion.modelId} — retrain required`,
       { modelId: champion.modelId },
     );
   }
@@ -82,7 +82,7 @@ export async function runInferenceWorker({ symbol, features, modelId }) {
 
   // 4. Build strict payload for infer.py
   const payload = {
-    model_b64:     artifactB64,
+    model_path:    artifactPath,
     features:      featureVector,
     feature_names: champion.featureSet,
     inv_label_map: champion.invLabelMap || {},
