@@ -183,9 +183,9 @@ export const yahooProvider = {
   supportsTicks:true,
   supportsCandles:true,
   supportsOrderBook:false,
-  status(){ return { status:'fallback_delayed', connected:false, warnings:['Yahoo is fallback/delayed/unofficial-style data and not institutional live feed.'], metadata: { timeoutMs: YAHOO_TIMEOUT_MS, retries: YAHOO_RETRIES, minIntervalMs: YAHOO_MIN_INTERVAL_MS } }; },
+  status(){ return { status:'delayed', connected:false, sourceType:'delayed_rest', warnings:['Yahoo Finance is delayed unofficial REST data — not a live institutional feed.'], metadata: { timeoutMs: YAHOO_TIMEOUT_MS, retries: YAHOO_RETRIES, minIntervalMs: YAHOO_MIN_INTERVAL_MS } }; },
   validateCredentials(){ return { valid:true, warnings:[] }; },
-  start(){ return { status:'fallback_delayed', connected:false}; },
+  start(){ return { status:'delayed', connected:false, sourceType:'delayed_rest' }; },
   stop(){ return {status:'stopped',connected:false}; },
   async getLatestTick(symbol){
     const { data: chart } = await fetchYahooChart(symbol, '1m');

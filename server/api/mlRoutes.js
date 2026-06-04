@@ -220,13 +220,22 @@ mlRoutes.get('/model', async (_req, res) => {
   try {
     const raw      = await readFile(MODEL_METADATA, 'utf-8');
     const metadata = JSON.parse(raw);
-    return res.status(200).json({ ok: true, metadata });
+    return res.status(200).json({
+      ok:          true,
+      metadata,
+      champion:    metadata,   // alias — some frontend variants read data.champion
+      challengers: [],
+      status:      'model_loaded',
+    });
   } catch (err) {
     if (err.code === 'ENOENT') {
       return res.status(200).json({
-        ok:       true,
-        metadata: null,
-        message:  'No champion model trained yet',
+        ok:          true,
+        metadata:    null,
+        champion:    null,
+        challengers: [],
+        status:      'no_model',
+        message:     'No champion model trained yet',
       });
     }
     log.error('model metadata read error', { error: err.message });
@@ -328,7 +337,8 @@ function _trainingRunsHandler(_req, res) {
     pid:       j.pid ?? null,
     status:    'running',
   }));
-  return res.status(200).json({ ok: true, activeJobs: jobs, count: jobs.length });
+  // activeJobs is the canonical field; runs/models are aliases for frontend compat
+  return res.status(200).json({ ok: true, activeJobs: jobs, runs: jobs, models: jobs, count: jobs.length });
 }
 
 mlRoutes.get('/training-runs', _trainingRunsHandler);
@@ -342,13 +352,19 @@ mlRoutes.get('/model-card', async (req, res) => {
   try {
     const content = await readFile(MODEL_CARD, 'utf-8');
     if (req.headers?.accept?.includes('application/json')) {
-      return res.status(200).json({ ok: true, content });
+      return res.status(200).json({ ok: true, content, modelCard: content, status: 'available' });
     }
     res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
     return res.status(200).send(content);
   } catch (err) {
     if (err.code === 'ENOENT') {
-      return res.status(200).json({ ok: true, content: null, message: 'No model card available yet' });
+      return res.status(200).json({
+        ok:        true,
+        content:   null,
+        modelCard: null,
+        status:    'not_available',
+        message:   'No model card available yet',
+      });
     }
     log.error('model card read error', { error: err.message });
     return res.status(500).json({ ok: false, error: 'Failed to read model card', code: 'MODEL_CARD_READ_ERROR' });

@@ -7,7 +7,17 @@ const marketStreamRoutes = Router();
 // GET /api/providers/health
 // Extended provider health: MarketStreamEngine adapter states + feedManager yahoo health + canonical provider list
 marketStreamRoutes.get('/providers/health', (_req, res) => {
-  return res.json(feedManager.getCanonicalProviderState());
+  const streamHealth = marketStreamEngine.getProviderHealth();
+  const yahooHealth = feedManager.getProviderHealth('yahoo');
+  const canonical = feedManager.getCanonicalProviderState();
+  return res.json({
+    ok: true,
+    success: true,
+    providers: streamHealth,
+    canonicalProviders: canonical.providers,
+    yahooHealth,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // GET /api/market/runtime
