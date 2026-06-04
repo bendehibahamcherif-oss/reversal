@@ -21,10 +21,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { randomUUID }    from 'node:crypto';
 
-import { mlWorkerPool }                        from '../ml/mlWorkerPool.js';
-import { InferenceError, HARD_TIMEOUT_MS }     from '../ml/inferenceWorker.js';
+import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
+                                               from './pythonInference.js';
 import { validateRequestBody, SchemaError }    from '../ml/mlInferSchema.js';
-import { modelRegistryService }                from '../ai/registry/modelRegistryService.js';
 import { logger as _log }                      from '../observability/logger.js';
 
 const log = _log.child({ component: 'mlRoutes' });
@@ -124,42 +123,69 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
     throw err;
   }
 
-  const { features, timeframe, modelId } = req.body;
+  const { features, timeframe } = req.body;
 
   log.info('infer request', {
     symbol,
     timeframe:    timeframe || null,
-    modelId:      modelId   || 'champion',
     featureCount: Object.keys(features).length,
   });
 
+  // Load model metadata for feature alignment and label mapping
+  let meta;
   try {
-    const result = await mlWorkerPool.infer(symbol, features, { modelId });
+    const raw = await readFile(MODEL_METADATA, 'utf-8');
+    meta = JSON.parse(raw);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(422).json({
+        ok:    false,
+        error: 'No champion model available — run training first',
+        code:  'NO_CHAMPION',
+      });
+    }
+    log.error('model metadata read error', { symbol, error: err.message });
+    return res.status(500).json({ ok: false, error: 'Failed to read model metadata', code: 'MODEL_READ_ERROR' });
+  }
+
+  const featureNames = Array.isArray(meta.feature_names) ? meta.feature_names : [];
+  const invLabelMap  = (meta.inv_label_map && typeof meta.inv_label_map === 'object')
+    ? meta.inv_label_map
+    : { '0': 'SHORT', '1': 'NEUTRAL', '2': 'LONG' };
+
+  try {
+    const result = await pythonInference.infer({ features, featureNames, invLabelMap });
 
     return res.json({
       ok:            true,
       symbol,
       timeframe:     timeframe || '1m',
-      prediction:    result.prediction,
+      prediction:    result.signal,   // signal → prediction for API compat
       confidence:    result.confidence,
       probabilities: result.probabilities,
-      modelId:       result.modelId,
-      modelType:     result.modelType,
-      championSince: result.championSince,
+      modelId:       meta.best_model    || 'unknown',
+      modelType:     meta.best_model    || 'unknown',
+      championSince: meta.trained_at    || null,
       latencyMs:     result.latencyMs,
-      inferredAt:    result.inferredAt,
+      inferredAt:    new Date().toISOString(),
     });
   } catch (err) {
-    if (err instanceof InferenceError) {
-      const status = _codeToStatus(err.code);
-      log.warn('inference error', {
-        symbol, code: err.code, message: err.message, ...err.details,
+    if (err instanceof InferenceTimeoutError) {
+      log.warn('inference timeout', { symbol, timeoutMs: err.timeoutMs });
+      return res.status(504).json({
+        ok:    false,
+        error: err.message,
+        code:  'TIMEOUT',
+        details: { timeoutMs: err.timeoutMs },
       });
+    }
+    if (err instanceof InferenceWorkerError) {
+      const status = _workerErrorToStatus(err.code);
+      log.warn('inference worker error', { symbol, code: err.code, message: err.message });
       return res.status(status).json({
-        ok:      false,
-        error:   err.message,
-        code:    err.code,
-        details: err.details,
+        ok:    false,
+        error: err.message,
+        code:  err.code,
       });
     }
     log.error('unexpected inference error', { symbol, error: err.message });
@@ -171,22 +197,18 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
 //
 // Returns worker health: champion count, pool stats, timeout config.
 
-mlRoutes.get('/health', (_req, res) => {
-  const pool      = mlWorkerPool.getStats();
-  const all       = modelRegistryService.list();
-  const champions = all.filter((m) => m.status === 'champion');
-
+mlRoutes.get('/health', async (_req, res) => {
+  const health = await pythonInference.health();
   return res.json({
-    ok:             true,
-    service:        'ml-inference-worker',
-    hardTimeoutMs:  HARD_TIMEOUT_MS,
-    pythonBin:      pool.pythonBin,
-    champions:      champions.length,
-    championSymbols: champions.map((m) => m.symbol),
-    pool,
-    note: pool.poolType === 'single-process'
-      ? 'Single-process mode — set ML_WORKER_POOL_SIZE and swap to piscina for pool'
-      : 'Worker pool active',
+    ok:            health.ok,
+    service:       'ml-inference-worker',
+    workerAlive:   health.workerAlive,
+    pid:           health.pid,
+    restarts:      health.restarts,
+    totalRequests: health.totalRequests,
+    errors:        health.errors,
+    modelVersion:  health.modelVersion,
+    pendingCount:  health.pendingCount,
   });
 });
 
@@ -340,17 +362,18 @@ mlRoutes.get('/schema', async (_req, res) => {
 
 // ── HTTP status mapping ───────────────────────────────────────────────────────
 
-function _codeToStatus(code) {
+function _workerErrorToStatus(code) {
   switch (code) {
-    case 'NO_CHAMPION':        return 422;
-    case 'ARTIFACT_NOT_FOUND': return 422;
-    case 'TIMEOUT':            return 504;
-    case 'SCHEMA_ERROR':       return 502;
-    case 'PARSE_ERROR':        return 502;
-    case 'PYTHON_ERROR':       return 502;
-    case 'SPAWN_ERROR':        return 503;
-    case 'STDIN_ERROR':        return 503;
-    default:                   return 500;
+    case 'MAX_RESTARTS_EXCEEDED': return 503;
+    case 'SPAWN_ERROR':           return 503;
+    case 'STARTUP_TIMEOUT':       return 503;
+    case 'STARTUP_FAILED':        return 503;
+    case 'STARTUP_EXIT':          return 503;
+    case 'SHUTDOWN':              return 503;
+    case 'STDIN_ERROR':           return 503;
+    case 'WORKER_CRASHED':        return 502;
+    case 'WORKER_ERROR':          return 502;
+    default:                      return 500;
   }
 }
 
