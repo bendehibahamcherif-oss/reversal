@@ -43,18 +43,41 @@ class FeedManager {
     };
   }
 
-  getRuntimeState(providerId) {
-    const runtime = this.validateProviderRuntime(providerId);
-    return { ...runtime, valid: runtime.providerInitialized && runtime.usable && runtime.credentialLoaded && runtime.enabled };
+
+  validateProviderRuntime(providerId) {
+    const provider = this._getProviderByAnyCase(providerId);
+    if (!provider) {
+      return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, enabled: false, usable: false, active: false, status: 'missing', lastError: 'provider_not_found' };
+    }
+    const credentials = credentialStore.get(provider.id);
+    const hasCredential = Boolean(credentials.apiKey || credentials.gatewayUrl || credentials.sessionId);
+    const credentialLoaded = !provider.requiresCredentials || hasCredential;
+    const providerInitialized = typeof provider.status === 'function';
+    const state = providerInitialized ? provider.status(credentials) : { status: 'unknown', connected: false };
+    const usable = !provider.requiresCredentials || (credentialLoaded && state.status !== 'missing_credentials' && state.status !== 'requires_gateway');
+    const enabled = this.enabledByProvider[provider.id] !== undefined ? Boolean(this.enabledByProvider[provider.id]) : true;
+    return { provider: provider.id, credentialLoaded, providerInitialized, enabled, usable, active: this.activeProviders.includes(provider.id), status: state.status, lastError: state.lastError || null };
   }
 
-  resolveActiveState({ providers = [], enabledByProvider = {}, symbols = [] } = {}) {
+  getRuntimeState(providerId) {
+    const runtime = this.validateProviderRuntime(providerId);
+    const provider = providerRegistry.get(providerId);
+    const gatewayBlocked = runtime.status === 'requires_gateway';
+    return {
+      ...runtime,
+      valid: runtime.providerInitialized && runtime.usable && runtime.enabled && (!provider?.requiresCredentials || runtime.credentialLoaded) && !gatewayBlocked
+    };
+  }
+
+  resolveActiveState({ providers = [], enabledByProvider = {}, symbols = [], allowEmergencyFallback = true } = {}) {
     const available = providerRegistry.list().map((p) => p.id);
-    const requested = Array.isArray(providers) && providers.length ? providers.map((id) => String(id)) : [DEFAULT_DATA_PROVIDER, DEFAULT_FALLBACK_PROVIDER];
+    const hasExplicitProviders = Array.isArray(providers) && providers.length > 0;
+    const requested = hasExplicitProviders ? providers.map((id) => String(id)) : [DEFAULT_DATA_PROVIDER];
     const deduped = [];
     for (const providerId of requested) {
-      if (!available.includes(providerId) || deduped.includes(providerId)) continue;
-      deduped.push(providerId);
+      const provider = this._getProviderByAnyCase(providerId);
+      if (!provider || deduped.includes(provider.id)) continue;
+      deduped.push(provider.id);
     }
 
     const normalizedEnabled = {};
@@ -63,13 +86,52 @@ class FeedManager {
       normalizedEnabled[providerId] = explicit;
     }
 
-    const preferredOrder = ['yahoo', 'twelvedata', DEFAULT_FALLBACK_PROVIDER];
-    const orderedRequested = [...preferredOrder, ...deduped.filter((providerId) => !preferredOrder.includes(providerId))];
-    const validProviders = orderedRequested.filter((providerId) => normalizedEnabled[providerId]).filter((providerId) => this.getRuntimeState(providerId).valid);
-    const fallbackOrdered = available.filter((providerId) => normalizedEnabled[providerId] && this.getRuntimeState(providerId).valid);
-    const finalProviders = (validProviders.length ? validProviders : fallbackOrdered).length ? (validProviders.length ? validProviders : fallbackOrdered) : [DEFAULT_FALLBACK_PROVIDER];
+    const validProviders = deduped.filter((providerId) => normalizedEnabled[providerId]).filter((providerId) => this.getRuntimeState(providerId).valid);
+    const warnings = [];
+    let finalProviders = validProviders;
+    if (!finalProviders.length && allowEmergencyFallback) {
+      finalProviders = [DEFAULT_FALLBACK_PROVIDER];
+      normalizedEnabled[DEFAULT_FALLBACK_PROVIDER] = true;
+      warnings.push('No viable providers were available; fallback_demo was selected as an explicit emergency fallback.');
+    }
 
-    return { providers: finalProviders, enabledByProvider: normalizedEnabled, symbols: normalizeSymbolList(symbols) };
+    return { providers: finalProviders, enabledByProvider: normalizedEnabled, symbols: normalizeSymbolList(symbols), warnings };
+  }
+
+  validateActiveProviderSelection({ providers = [], providerOrder = providers, symbols = [] } = {}) {
+    if (!Array.isArray(providers)) {
+      return { ok: false, status: 400, error: { code: 'invalid_providers', message: 'providers must be an array.' } };
+    }
+    const requestedOrder = Array.isArray(providerOrder) && providerOrder.length ? providerOrder : providers;
+    const deduped = [];
+    for (const providerId of requestedOrder) {
+      const provider = this._getProviderByAnyCase(providerId);
+      if (!provider) {
+        return { ok: false, status: 400, error: { code: 'unknown_provider', message: `Unknown provider '${providerId}'.`, providerId: String(providerId) } };
+      }
+      if (providers.map((p) => String(p)).includes(String(providerId)) && !deduped.includes(provider.id)) deduped.push(provider.id);
+    }
+    for (const providerId of providers) {
+      const provider = this._getProviderByAnyCase(providerId);
+      if (!provider) {
+        return { ok: false, status: 400, error: { code: 'unknown_provider', message: `Unknown provider '${providerId}'.`, providerId: String(providerId) } };
+      }
+      if (!deduped.includes(provider.id)) deduped.push(provider.id);
+    }
+    if (!deduped.length) {
+      return { ok: false, status: 400, error: { code: 'empty_provider_selection', message: 'Select at least one viable provider.' } };
+    }
+    for (const providerId of deduped) {
+      const provider = providerRegistry.get(providerId);
+      const runtime = this.getRuntimeState(providerId);
+      if (provider?.requiresCredentials && !runtime.credentialLoaded) {
+        return { ok: false, status: 400, error: { code: 'missing_credentials', message: `${provider.name || provider.id} requires API key.`, providerId } };
+      }
+      if (runtime.status === 'requires_gateway') {
+        return { ok: false, status: 400, error: { code: 'requires_gateway', message: `${provider.name || provider.id} requires a gateway connection.`, providerId } };
+      }
+    }
+    return { ok: true, providers: deduped, symbols: normalizeSymbolList(symbols) };
   }
 
   restoreActiveProviderState() {
@@ -156,40 +218,72 @@ class FeedManager {
   }
 
   listProviders() {
-    return providerRegistry.list().map((p) => {
-      const runtime = this.getRuntimeState(p.id);
-      const meta = credentialStore.getMeta(p.id);
-      const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...meta, enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: providerRegistry.getStatus(p.id).status, connected: providerRegistry.getStatus(p.id).connected, warnings: providerRegistry.getStatus(p.id).warnings || [] };
-      const contract = this.normalizeProviderContract(provider, runtime);
-      return { ...provider, ...contract, contract };
-    });
+    return providerRegistry.list().map((p) => this.getProvider(p.id)).filter(Boolean);
   }
-  getProvider(providerId) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; const ps = providerRegistry.getStatus(p.id); const runtime = this.getRuntimeState(p.id); const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...credentialStore.getMeta(p.id), enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: ps.status, connected: ps.connected, warnings: ps.warnings || [] }; return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) }; }
-  setProviderCredentials(providerId, credentials) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; credentialStore.set(p.id, credentials); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return credentialStore.getMeta(p.id); }
-  clearProviderCredentials(providerId) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; const meta = credentialStore.clear(p.id); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return meta; }
 
-  listProviderCredentials() { return credentialStore.listMeta(); }
-  validateProviderRuntime(providerId) {
-    const provider = this._getProviderByAnyCase(providerId);
-    const credentials = credentialStore.get(provider ? provider.id : providerId);
-    if (!provider) {
-      return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, enabled: false, usable: false, active: false, status: 'provider_not_found', lastError: null };
-    }
-    const hasCredential = Boolean(credentials.apiKey);
-    const credentialLoaded = !provider.requiresCredentials || hasCredential;
-    const providerInitialized = typeof provider.status === 'function';
-    const state = providerInitialized ? provider.status(credentials) : { status: 'unknown', connected: false };
-    const usable = !provider.requiresCredentials || state.status !== 'missing_credentials';
-    const enabled = this.enabledByProvider[provider.id] !== undefined ? Boolean(this.enabledByProvider[provider.id]) : true;
-    return { provider: provider.id, credentialLoaded, providerInitialized, enabled, usable, active: this.activeProviders.includes(provider.id), status: state.status, lastError: state.lastError || null };
+  getProvider(providerId) {
+    const p = this._getProviderByAnyCase(providerId);
+    if (!p) return null;
+    const status = providerRegistry.getStatus(p.id);
+    const runtime = this.getRuntimeState(p.id);
+    const meta = credentialStore.getMeta(p.id);
+    const selected = Boolean(this.enabledByProvider[p.id]);
+    const active = this.activeProviders.includes(p.id);
+    const warnings = Array.isArray(status.warnings) ? status.warnings.filter((warning) => !(meta.configured && String(warning).toLowerCase().includes('not configured'))) : [];
+    const provider = { id: p.id, name: p.name, label: p.name || p.id, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...meta, enabled: selected, selected, active, priority: active ? this.activeProviders.indexOf(p.id) : -1, runtime, status: status.status, connected: status.connected, warnings };
+    return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) };
   }
+
+  setProviderCredentials(providerId, credentials) {
+    const p = this._getProviderByAnyCase(providerId);
+    if (!p) return null;
+    credentialStore.set(p.id, credentials);
+    if (credentialStore.get(p.id).apiKey && !this.activeProviders.includes(p.id)) {
+      this.activeProviders = [...this.activeProviders.filter(Boolean), p.id];
+      this.enabledByProvider[p.id] = true;
+      this.persistActiveProviderState();
+    }
+    this.rebuildProviderStatuses();
+    return credentialStore.getMeta(p.id);
+  }
+
+  clearProviderCredentials(providerId) {
+    const p = this._getProviderByAnyCase(providerId);
+    if (!p) return null;
+    const meta = credentialStore.clear(p.id);
+    if (p.requiresCredentials && !credentialStore.get(p.id).apiKey && this.activeProviders.includes(p.id)) {
+      this.activeProviders = this.activeProviders.filter((id) => id !== p.id);
+      this.enabledByProvider[p.id] = false;
+      if (!this.activeProviders.length) {
+        this.activeProviders = [DEFAULT_FALLBACK_PROVIDER];
+        this.enabledByProvider[DEFAULT_FALLBACK_PROVIDER] = true;
+      }
+      this.persistActiveProviderState();
+    }
+    this.rebuildProviderStatuses();
+    return meta;
+  }
+
+  listProviderCredentials() {
+    return credentialStore.listMeta(providerRegistry.list().filter((p) => p.requiresCredentials).map((p) => p.id));
+  }
+
+  saveActiveProviders(payload = {}) {
+    const validation = this.validateActiveProviderSelection(payload);
+    if (!validation.ok) return validation;
+    const enabledByProvider = {};
+    for (const p of providerRegistry.list()) enabledByProvider[p.id] = validation.providers.includes(p.id);
+    this.activeProviders = validation.providers;
+    this.enabledByProvider = enabledByProvider;
+    this.activeSymbols = validation.symbols;
+    this.persistActiveProviderState();
+    this.rebuildProviderStatuses();
+    return { ok: true, ...this.getCanonicalProviderState() };
+  }
+
   setActiveProviders({ providers = [], enabledByProvider = {}, symbols = [] } = {}) {
-    const fallbackPrevious = { providers: this.activeProviders, enabledByProvider: this.enabledByProvider, symbols: this.activeSymbols };
-    const mergedEnabled = { ...this.enabledByProvider, ...(enabledByProvider || {}) };
-    const hasProvidersField = Array.isArray(providers);
-    const providerInput = hasProvidersField ? providers : fallbackPrevious.providers;
-    const resolved = this.resolveActiveState({ providers: providerInput.length ? providerInput : fallbackPrevious.providers, enabledByProvider: mergedEnabled, symbols: Array.isArray(symbols) ? symbols : fallbackPrevious.symbols });
-    if (!resolved.providers.length && fallbackPrevious.providers.length) return this.getActiveProviders();
+    const explicitProviders = Array.isArray(providers) && providers.length ? providers : this.activeProviders;
+    const resolved = this.resolveActiveState({ providers: explicitProviders, enabledByProvider: { ...this.enabledByProvider, ...(enabledByProvider || {}) }, symbols: Array.isArray(symbols) ? symbols : this.activeSymbols });
     this.activeProviders = resolved.providers;
     this.enabledByProvider = resolved.enabledByProvider;
     this.activeSymbols = resolved.symbols;
@@ -197,7 +291,43 @@ class FeedManager {
     this.rebuildProviderStatuses();
     return this.getActiveProviders();
   }
+
   getActiveProviders() { return { providers: Array.isArray(this.activeProviders) ? this.activeProviders.filter(Boolean).map((provider) => String(provider)) : [], providerOrder: Array.isArray(this.activeProviders) ? this.activeProviders.filter(Boolean).map((provider) => String(provider)) : [], enabledByProvider: { ...this.enabledByProvider }, symbols: Array.isArray(this.activeSymbols) ? this.activeSymbols.filter(Boolean).map((symbol) => String(symbol)) : [], defaultProvider: DEFAULT_DATA_PROVIDER }; }
+
+  toCanonicalProvider(provider) {
+    const credentialStatus = !provider.requiresCredentials ? 'not_required' : (provider.configured ? 'configured' : 'missing');
+    let runtimeStatus = provider.status || 'unknown';
+    if (credentialStatus === 'configured' && (runtimeStatus === 'missing_credentials' || runtimeStatus.startsWith('configured'))) runtimeStatus = provider.connected ? 'connected' : 'delayed';
+    const delayed = Boolean(provider.supportsCandles);
+    return {
+      id: provider.id,
+      label: provider.name || provider.id,
+      requiresCredentials: Boolean(provider.requiresCredentials),
+      credentialStatus,
+      runtimeStatus,
+      selected: Boolean(provider.selected),
+      active: Boolean(provider.active),
+      connected: Boolean(provider.connected),
+      realtime: Boolean(provider.supportsTicks && provider.connected),
+      delayed,
+      priority: typeof provider.priority === 'number' ? provider.priority : -1,
+      warnings: Array.isArray(provider.warnings) ? provider.warnings : [],
+      capabilities: { realtime: Boolean(provider.supportsTicks), delayed, candles: Boolean(provider.supportsCandles), ticks: Boolean(provider.supportsTicks), orderbook: Boolean(provider.supportsOrderBook) }
+    };
+  }
+
+  getCanonicalProviderState() {
+    const providers = this.listProviders().map((provider) => this.toCanonicalProvider(provider));
+    const active = this.getActiveProviders();
+    const activeProviders = active.providers;
+    return { success: true, providers, activeProviders, providerOrder: active.providerOrder, source: activeProviders[0] || DEFAULT_FALLBACK_PROVIDER, warnings: [] };
+  }
+
+  getFeedStatusPayload() {
+    const canonical = this.getCanonicalProviderState();
+    return { ok: true, success: true, activeProviders: canonical.activeProviders, providerOrder: canonical.providerOrder, source: canonical.source, connected: canonical.providers.some((p) => p.active && p.connected), providers: canonical.providers, statuses: canonical.providers, warnings: canonical.warnings };
+  }
+
   getDebugState() {
     const providers = this.listProviders();
     return {
@@ -205,7 +335,7 @@ class FeedManager {
       providerOrder: this.getActiveProviders().providerOrder,
       enabledByProvider: { ...this.enabledByProvider },
       providers,
-      credentialsConfigured: providers.reduce((acc, provider) => ({ ...acc, [provider.provider]: Boolean(provider.configured) }), {}),
+      credentialsConfigured: providers.reduce((acc, provider) => ({ ...acc, [provider.id]: Boolean(provider.configured) }), {}),
       timestamp: new Date().toISOString(),
     };
   }
