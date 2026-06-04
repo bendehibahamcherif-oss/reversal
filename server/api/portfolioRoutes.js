@@ -56,6 +56,41 @@ portfolioRoutes.get('/var', async (req, res) => {
   }
 });
 
+// GET /api/portfolio/pnl?mode=paper
+portfolioRoutes.get('/pnl', async (req, res) => {
+  try {
+    const result = await portfolioEngine.getSummary(parseMode(req));
+    if (result.error) return replyWithEngineResult(res, result);
+    return res.json({
+      ok:   true,
+      pnl: {
+        realized:   result.totalRealizedPnL   ?? 0,
+        unrealized: result.totalUnrealizedPnL ?? 0,
+        total:      result.totalPnL           ?? 0,
+        currency:   'USD',
+      },
+      mode: result.mode,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// GET /api/portfolio/exposure?mode=paper
+portfolioRoutes.get('/exposure', async (req, res) => {
+  try {
+    const result = await portfolioEngine.getSummary(parseMode(req));
+    if (result.error) return replyWithEngineResult(res, result);
+    return res.json({
+      ok:       true,
+      exposure: result.exposure ?? { gross: 0, net: 0, long: 0, short: 0 },
+      mode:     result.mode,
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // POST /api/portfolio/stress-test?mode=paper
 // Body: { scenarios: [{ name: string, shocks: { SYMBOL: number } }] }
 portfolioRoutes.post('/stress-test', async (req, res) => {
