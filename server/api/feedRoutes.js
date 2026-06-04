@@ -8,13 +8,15 @@ const feedRoutes = Router();
 feedRoutes.get('/status', (_req, res) => {
   const statuses = feedManager.getFeedStatus();
   const active   = feedManager.getActiveProviders();
+  const warnings = statuses.flatMap((s) => s.warnings || []).filter(Boolean);
   return res.json({
+    ok:              true,
     success:         true,
     activeProviders: active.providers,
     providerOrder:   active.providerOrder,
     source:          active.providers[0] || 'fallback_demo',
     connected:       statuses.some((s) => s.connected === true),
-    warnings:        [],
+    warnings,
     statuses,
     providers: statuses,
   });
@@ -44,11 +46,13 @@ feedRoutes.get('/providers', (_req, res) => {
 });
 
 feedRoutes.get('/providers/active', (_req, res) => {
-  return res.json({ success: true, ...feedManager.getActiveProviders() });
+  const result = feedManager.getActiveProviders();
+  return res.json({ ok: true, success: true, ...result, activeProviders: result.providers });
 });
 
 feedRoutes.post('/providers/active', (req, res) => {
-  return res.json({ success: true, ...feedManager.setActiveProviders(req.body || {}) });
+  const result = feedManager.setActiveProviders(req.body || {});
+  return res.json({ ok: true, success: true, ...result, activeProviders: result.providers });
 });
 
 feedRoutes.get('/providers/:provider', (req, res) => {
@@ -64,7 +68,11 @@ feedRoutes.post('/providers/:provider/credentials', (req, res) => {
   if (!meta) {
     return res.status(404).json({ success: false, error: 'provider_not_found' });
   }
-  return res.json({ success: true, credentials: meta });
+  return res.json({
+    success: true,
+    credentials: meta,
+    credentialsStatus: meta.configured ? 'configured' : 'missing_credentials',
+  });
 });
 
 feedRoutes.delete('/providers/:provider/credentials', (req, res) => {
@@ -72,7 +80,7 @@ feedRoutes.delete('/providers/:provider/credentials', (req, res) => {
   if (!meta) {
     return res.status(404).json({ success: false, error: 'provider_not_found' });
   }
-  return res.json({ success: true, credentials: meta });
+  return res.json({ success: true, credentials: meta, credentialsStatus: 'missing_credentials' });
 });
 
 // ── Live data ────────────────────────────────────────────────────────────────

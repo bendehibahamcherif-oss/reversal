@@ -27,7 +27,7 @@ function buildValidationError(message, details = []) {
 
 providerCredentialRoutes.post('/credentials', (req, res) => {
   try {
-    const providerId = asString(req.body?.provider).toLowerCase();
+    const providerId = asString(req.body?.provider);
     const apiKey = asString(req.body?.apiKey);
     const apiSecret = asString(req.body?.apiSecret);
     const enabled = req.body?.enabled;
@@ -57,6 +57,7 @@ providerCredentialRoutes.post('/credentials', (req, res) => {
       success: true,
       message: `Credentials saved for provider '${providerId}'.`,
       credential: sanitizeCredentialMeta(saved),
+      credentialsStatus: saved.configured ? 'configured' : 'missing_credentials',
       runtime
     });
   } catch {
@@ -67,7 +68,7 @@ providerCredentialRoutes.post('/credentials', (req, res) => {
 providerCredentialRoutes.get('/credentials', (_req, res) => {
   try {
     const credentials = feedManager.listProviderCredentials().map(sanitizeCredentialMeta);
-    return res.json({ success: true, credentials, count: credentials.length });
+    return res.json({ ok: true, success: true, credentials, count: credentials.length });
   } catch {
     return res.status(500).json({ success: false, error: { code: 'credential_list_failed', message: 'Unable to load provider credentials.' } });
   }
@@ -75,7 +76,7 @@ providerCredentialRoutes.get('/credentials', (_req, res) => {
 
 providerCredentialRoutes.delete('/credentials/:provider', (req, res) => {
   try {
-    const providerId = asString(req.params?.provider).toLowerCase();
+    const providerId = asString(req.params?.provider);
     if (!providerId) {
       return res.status(400).json(buildValidationError('Provider is required.', [{ field: 'provider', message: 'Please provide a provider id.' }]));
     }
@@ -85,7 +86,7 @@ providerCredentialRoutes.delete('/credentials/:provider', (req, res) => {
     }
     const cleared = feedManager.clearProviderCredentials(providerId);
     console.info('[providerCredentials] clear', JSON.stringify({ provider: providerId }));
-    return res.json({ success: true, message: `Credentials cleared for provider '${providerId}'.`, credential: sanitizeCredentialMeta(cleared) });
+    return res.json({ success: true, message: `Credentials cleared for provider '${providerId}'.`, credential: sanitizeCredentialMeta(cleared), credentialsStatus: 'missing_credentials' });
   } catch {
     return res.status(500).json({ success: false, error: { code: 'credential_delete_failed', message: 'Unable to delete provider credentials.' } });
   }

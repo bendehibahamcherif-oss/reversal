@@ -69,11 +69,6 @@ class FeedManager {
     const fallbackOrdered = available.filter((providerId) => normalizedEnabled[providerId] && this.getRuntimeState(providerId).valid);
     const finalProviders = (validProviders.length ? validProviders : fallbackOrdered).length ? (validProviders.length ? validProviders : fallbackOrdered) : [DEFAULT_FALLBACK_PROVIDER];
 
-    if (!finalProviders.includes(DEFAULT_FALLBACK_PROVIDER) && this.getRuntimeState(DEFAULT_FALLBACK_PROVIDER).valid) {
-      finalProviders.push(DEFAULT_FALLBACK_PROVIDER);
-      normalizedEnabled[DEFAULT_FALLBACK_PROVIDER] = true;
-    }
-
     return { providers: finalProviders, enabledByProvider: normalizedEnabled, symbols: normalizeSymbolList(symbols) };
   }
 
@@ -152,6 +147,14 @@ class FeedManager {
     console.info('[liveState]', JSON.stringify({ event: 'provider_promoted', source: provider, symbol: normalizedSymbol, connected: provider !== DEFAULT_FALLBACK_PROVIDER }));
   }
 
+  _getProviderByAnyCase(id) {
+    const exact = providerRegistry.get(String(id || ''));
+    if (exact) return exact;
+    const lower = String(id || '').toLowerCase();
+    const match = providerRegistry.list().find((p) => String(p.id).toLowerCase() === lower);
+    return match ? providerRegistry.get(match.id) : null;
+  }
+
   listProviders() {
     return providerRegistry.list().map((p) => {
       const runtime = this.getRuntimeState(p.id);
@@ -161,14 +164,14 @@ class FeedManager {
       return { ...provider, ...contract, contract };
     });
   }
-  getProvider(providerId) { const p = providerRegistry.get(providerId); if (!p) return null; const ps = providerRegistry.getStatus(providerId); const runtime = this.getRuntimeState(providerId); const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...credentialStore.getMeta(providerId), enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: ps.status, connected: ps.connected, warnings: ps.warnings || [] }; return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) }; }
-  setProviderCredentials(providerId, credentials) { const p = providerRegistry.get(providerId); if (!p) return null; credentialStore.set(providerId, credentials); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return credentialStore.getMeta(providerId); }
-  clearProviderCredentials(providerId) { const p = providerRegistry.get(providerId); if (!p) return null; const meta = credentialStore.clear(providerId); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return meta; }
+  getProvider(providerId) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; const ps = providerRegistry.getStatus(p.id); const runtime = this.getRuntimeState(p.id); const provider = { id: p.id, name: p.name, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...credentialStore.getMeta(p.id), enabled: Boolean(this.enabledByProvider[p.id]), active: this.activeProviders.includes(p.id), priority: this.activeProviders.indexOf(p.id), runtime, status: ps.status, connected: ps.connected, warnings: ps.warnings || [] }; return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) }; }
+  setProviderCredentials(providerId, credentials) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; credentialStore.set(p.id, credentials); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return credentialStore.getMeta(p.id); }
+  clearProviderCredentials(providerId) { const p = this._getProviderByAnyCase(providerId); if (!p) return null; const meta = credentialStore.clear(p.id); this.setActiveProviders(this.getActiveProviders()); this.rebuildProviderStatuses(); return meta; }
 
   listProviderCredentials() { return credentialStore.listMeta(); }
   validateProviderRuntime(providerId) {
-    const provider = providerRegistry.get(providerId);
-    const credentials = credentialStore.get(providerId);
+    const provider = this._getProviderByAnyCase(providerId);
+    const credentials = credentialStore.get(provider ? provider.id : providerId);
     if (!provider) {
       return { provider: String(providerId || ''), credentialLoaded: false, providerInitialized: false, enabled: false, usable: false, active: false, status: 'provider_not_found', lastError: null };
     }
