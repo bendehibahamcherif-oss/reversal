@@ -28,6 +28,7 @@ import aiRoutes from '../api/aiRoutes.js';
 import mlRoutes from '../api/mlRoutes.js';
 import providerCredentialRoutes from '../api/providerCredentialRoutes.js';
 import portfolioRoutes from '../api/portfolioRoutes.js';
+import riskRoutes from '../api/riskRoutes.js';
 import executionRoutes from '../api/executionRoutes.js';
 import omsRoutes from '../api/omsRoutes.js';
 import multiAssetRoutes from '../api/multiAssetRoutes.js';
@@ -107,6 +108,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/ml', mlRoutes);
   app.use('/api/providers', providerCredentialRoutes);
   app.use('/api/portfolio', portfolioRoutes);
+  app.use('/api/risk', riskRoutes);
   app.use('/api/execution', strictRateLimiter(), executionRoutes);
   app.use('/api/oms', strictRateLimiter(), omsRoutes);
   app.use('/api/multi-asset', multiAssetRoutes);
