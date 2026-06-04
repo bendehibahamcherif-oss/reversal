@@ -373,6 +373,102 @@ mlRoutes.get('/schema', async (_req, res) => {
   }
 });
 
+// ── GET /api/ml/signal/:symbol ────────────────────────────────────────────────
+//
+// Returns the latest cached inference result for a symbol.
+// Since the current architecture is stateless (no inference persistence),
+// returns an empty/unavailable state without 404.
+
+mlRoutes.get('/signal/:symbol', (_req, res) => {
+  const symbol = String(_req.params.symbol || '').toUpperCase();
+  return res.status(200).json({
+    ok:          true,
+    symbol,
+    signal:      null,
+    prediction:  null,
+    confidence:  null,
+    probabilities: null,
+    inferredAt:  null,
+    status:      'no_cached_signal',
+    message:     'No cached signal — run /api/ml/infer/:symbol to generate one',
+  });
+});
+
+// ── GET /api/ml/feature-importance ───────────────────────────────────────────
+//
+// Returns feature importance from the champion model's metadata.
+// Reads feature_schema.json if present; otherwise returns empty state.
+
+const FEATURE_IMPORTANCE_PATH = resolve(MODELS_DIR, 'feature_schema.json');
+
+mlRoutes.get('/feature-importance', async (req, res) => {
+  const modelVersion = req.query.modelVersion || null;
+  try {
+    const raw    = await readFile(MODEL_METADATA, 'utf-8');
+    const meta   = JSON.parse(raw);
+    const names  = Array.isArray(meta.feature_names) ? meta.feature_names : [];
+
+    // Try to read importance scores from schema if available
+    let scores = [];
+    try {
+      const schemaRaw = await readFile(FEATURE_IMPORTANCE_PATH, 'utf-8');
+      const schema    = JSON.parse(schemaRaw);
+      const feats     = Array.isArray(schema.features) ? schema.features : [];
+      scores = feats.map((f, i) => ({
+        feature:    typeof f === 'object' ? (f.name || f.feature || String(i)) : String(f),
+        importance: typeof f === 'object' ? (f.importance ?? 1 / feats.length) : (1 / names.length || 0),
+        rank:       i + 1,
+      }));
+    } catch {
+      // No schema file — build from feature_names with equal weights
+      scores = names.map((name, i) => ({
+        feature:    name,
+        importance: names.length ? 1 / names.length : 0,
+        rank:       i + 1,
+      }));
+    }
+
+    return res.status(200).json({
+      ok:           true,
+      modelId:      meta.best_model    || null,
+      modelVersion: modelVersion       || meta.best_model || null,
+      trainedAt:    meta.trained_at    || null,
+      features:     scores,
+      count:        scores.length,
+    });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(200).json({
+        ok:       true,
+        features: [],
+        count:    0,
+        status:   'no_champion',
+        message:  'No champion model — train a model first',
+      });
+    }
+    log.error('feature-importance read error', { error: err.message });
+    return res.status(500).json({ ok: false, error: 'Failed to read feature importance', code: 'FEATURE_IMPORTANCE_ERROR' });
+  }
+});
+
+// ── GET /api/ml/drift ─────────────────────────────────────────────────────────
+//
+// Returns PSI drift metrics. No live drift engine yet — returns structured
+// empty state so the frontend can render "not enough data" without crashing.
+
+mlRoutes.get('/drift', (_req, res) => {
+  return res.status(200).json({
+    ok:     true,
+    drift: {
+      psi:     {},
+      status:  'not_enough_data',
+      message: 'Drift monitoring requires at least two inference windows. Run inference on more data.',
+      detectedAt: null,
+      features:   [],
+    },
+  });
+});
+
 // ── HTTP status mapping ───────────────────────────────────────────────────────
 
 function _workerErrorToStatus(code) {

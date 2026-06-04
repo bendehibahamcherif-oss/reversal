@@ -9,9 +9,9 @@ function parseMode(req) {
 
 function replyWithEngineResult(res, result) {
   if (result.error && result.code) {
-    return res.status(result.code).json({ success: false, error: result.error, mode: result.mode });
+    return res.status(result.code).json({ ok: false, success: false, error: result.error, mode: result.mode });
   }
-  return res.json({ success: true, ...result });
+  return res.json({ ok: true, success: true, ...result });
 }
 
 // GET /api/portfolio/positions?mode=paper
