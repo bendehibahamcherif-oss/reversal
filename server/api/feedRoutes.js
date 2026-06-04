@@ -6,20 +6,7 @@ const feedRoutes = Router();
 // ── Status ─────────────────────────────────────────────────────────────────
 
 feedRoutes.get('/status', (_req, res) => {
-  const statuses = feedManager.getFeedStatus();
-  const active   = feedManager.getActiveProviders();
-  const warnings = statuses.flatMap((s) => s.warnings || []).filter(Boolean);
-  return res.json({
-    ok:              true,
-    success:         true,
-    activeProviders: active.providers,
-    providerOrder:   active.providerOrder,
-    source:          active.providers[0] || 'fallback_demo',
-    connected:       statuses.some((s) => s.connected === true),
-    warnings,
-    statuses,
-    providers: statuses,
-  });
+  return res.json(feedManager.getFeedStatusPayload());
 });
 
 feedRoutes.get('/status/:source', (req, res) => {
@@ -51,8 +38,11 @@ feedRoutes.get('/providers/active', (_req, res) => {
 });
 
 feedRoutes.post('/providers/active', (req, res) => {
-  const result = feedManager.setActiveProviders(req.body || {});
-  return res.json({ ok: true, success: true, ...result, activeProviders: result.providers });
+  const result = feedManager.saveActiveProviders(req.body || {});
+  if (!result.ok) {
+    return res.status(result.status || 400).json({ success: false, error: result.error });
+  }
+  return res.json({ ok: true, success: true, activeProviders: result.activeProviders, providerOrder: result.providerOrder, providers: result.providers, source: result.source, warnings: result.warnings });
 });
 
 feedRoutes.get('/providers/:provider', (req, res) => {

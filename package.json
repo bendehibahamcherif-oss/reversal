@@ -7,7 +7,9 @@
     "start": "node server.js",
     "server:smoke": "node scripts/server-smoke.cjs",
     "test:ml": "node scripts/test-ml-inference.cjs",
-    "check:server": "node --check server/index.cjs"
+    "check:server": "node --check server/index.cjs",
+    "test": "node --test server/tests/*.test.js",
+    "build": "node --check server/index.cjs && node --check server.js"
   },
   "engines": {
     "node": "20.x"
