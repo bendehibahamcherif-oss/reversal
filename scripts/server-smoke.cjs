@@ -55,10 +55,11 @@ const checks = [
   { method: 'GET', path: '/api/feeds/status' },
   { method: 'GET', path: '/api/feeds/providers' },
   { method: 'POST', path: '/api/feeds/providers/active', body: { providers: ['fallback_demo', 'yahoo'], symbols: ['SPY', 'QQQ'] } },
-  { method: 'GET', path: '/api/feeds/providers/active' },
-  { method: 'POST', path: '/api/feeds/providers/polygon/credentials', body: { apiKey: 'fake_polygon_key_12345' } },
+  { method: 'GET', path: '/api/feeds/providers/active', _feedsActiveCheck: true },
+  { method: 'POST', path: '/api/feeds/providers/polygon/credentials', body: { apiKey: 'fake_polygon_key_12345' }, _feedsCredsCheck: true },
   { method: 'GET', path: '/api/feeds/providers/polygon' },
-  { method: 'DELETE', path: '/api/feeds/providers/polygon/credentials' },
+  { method: 'DELETE', path: '/api/feeds/providers/polygon/credentials', _feedsCredsDeleteCheck: true },
+  { method: 'GET', path: '/api/providers/health', _providersHealthCheck: true },
   { method: 'POST', path: '/api/feeds/demo/tick/SPY' },
   { method: 'GET', path: '/api/feeds/tick/SPY' },
   { method: 'POST', path: '/api/feeds/demo/candle/SPY' },
@@ -102,6 +103,23 @@ const checks = [
   { method: 'GET',  path: '/api/portfolio/var?mode=paper&confidence=0.95&horizon=1', _portfolioVarCheck: true },
   { method: 'POST', path: '/api/portfolio/stress-test?mode=paper', body: { scenarios: [{ name: 'Market Crash -10%', shocks: { '*': -0.10 } }, { name: 'Tech Rally +5%', shocks: { SPY: 0.05 } }] }, _portfolioStressCheck: true },
   { method: 'GET',  path: '/api/portfolio/summary?mode=live', _portfolioLiveCheck: true },
+  // ── Risk Analytics (/api/risk/*) ──────────────────────────────────────────
+  { method: 'GET', path: '/api/risk/summary?mode=paper',  _riskSummaryCheck: true },
+  { method: 'GET', path: '/api/risk/summary?mode=live',   _riskLiveCheck: true },
+  { method: 'GET', path: '/api/risk/exposure?mode=paper', _riskExposureCheck: true },
+  { method: 'GET', path: '/api/risk/drawdown?mode=paper', _riskDrawdownCheck: true },
+  { method: 'GET', path: '/api/risk/var?mode=paper',      _riskVarCheck: true },
+  { method: 'GET', path: '/api/risk/limits',              _riskLimitsCheck: true },
+  { method: 'GET', path: '/api/risk/alerts?mode=paper',   _riskAlertsCheck: true },
+  // ── ML Worker Routes (/api/ml/*) ─────────────────────────────────────────
+  { method: 'GET', path: '/api/ml/health',           _mlWorkerHealthCheck: true },
+  { method: 'GET', path: '/api/ml/model',            _mlWorkerModelCheck: true },
+  { method: 'GET', path: '/api/ml/predictions',      _mlWorkerPredCheck: true },
+  { method: 'GET', path: '/api/ml/model-runs',       _mlWorkerRunsCheck: true },
+  { method: 'GET', path: '/api/ml/model-card',       _mlWorkerCardCheck: true },
+  { method: 'GET', path: '/api/ml/feature-importance', _mlWorkerFICheck: true },
+  { method: 'GET', path: '/api/ml/drift',            _mlWorkerDriftCheck: true },
+  { method: 'GET', path: '/api/ml/signal/SPY',       _mlWorkerSignalCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -338,7 +356,8 @@ async function run() {
       if (!response.ok && !check._previewNoDisclaimer && !check._portfolioLiveCheck
           && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
           && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled
-          && !check._omsNotFound && !check._instBadPack && !check._obsSessionGuardLive && !check._obsSessionGuardPaper) {
+          && !check._omsNotFound && !check._instBadPack && !check._obsSessionGuardLive && !check._obsSessionGuardPaper
+          && !check._riskLiveCheck) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -550,6 +569,29 @@ async function run() {
         }
       }
 
+      if (check._feedsCredsCheck) {
+        if (parsed.credentialsStatus !== 'configured') throw new Error(`${check.path} response missing credentialsStatus:'configured'`);
+      }
+
+      if (check._feedsCredsDeleteCheck) {
+        if (parsed.credentialsStatus !== 'missing_credentials') throw new Error(`${check.path} DELETE response must have credentialsStatus:'missing_credentials'`);
+      }
+
+      if (check._feedsActiveCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.activeProviders)) throw new Error(`${check.path} missing activeProviders array`);
+      }
+
+      if (check._providersHealthCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.canonicalProviders)) throw new Error(`${check.path} missing canonicalProviders array`);
+        if (!parsed.canonicalProviders.length) throw new Error(`${check.path} canonicalProviders must not be empty`);
+        const first = parsed.canonicalProviders[0];
+        if (!first.id) throw new Error(`${check.path} canonicalProviders[0] missing id`);
+        if (!first.credentialStatus) throw new Error(`${check.path} canonicalProviders[0] missing credentialStatus`);
+        if (!first.capabilities) throw new Error(`${check.path} canonicalProviders[0] missing capabilities`);
+      }
+
       if (check.method === 'GET' && check.path === '/api/feeds/providers/polygon') {
         const provider = parsed?.provider || {};
         if (!provider.configured || !Array.isArray(provider.maskedFields) || provider.maskedFields.some((field) => String(field).includes('fake_polygon_key_12345'))) {
@@ -578,6 +620,7 @@ async function run() {
 
       // ── Portfolio checks ─────────────────────────────────────────────────────
       if (check._portfolioCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
         if (!parsed.success) throw new Error(`${check.path} returned success:false`);
         if (parsed.mode !== 'paper') throw new Error(`${check.path} missing mode:paper`);
         if (parsed.modeBadge !== 'PAPER') throw new Error(`${check.path} missing modeBadge:PAPER`);
@@ -607,6 +650,105 @@ async function run() {
       if (check._portfolioLiveCheck) {
         if (response.status !== 503) throw new Error(`${check.path} live mode must return 503, got ${response.status}`);
         if (!parsed.error) throw new Error(`${check.path} live mode 503 missing error message`);
+      }
+
+      // ── Risk analytics checks ─────────────────────────────────────────────────
+      if (check._riskSummaryCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.mode !== 'paper') throw new Error(`${check.path} missing mode:paper`);
+        const r = parsed.risk;
+        if (!r) throw new Error(`${check.path} missing risk object`);
+        if (typeof r.grossExposure !== 'number') throw new Error(`${check.path} risk.grossExposure must be a number`);
+        if (typeof r.maxDrawdown !== 'number') throw new Error(`${check.path} risk.maxDrawdown must be a number`);
+        if (typeof r.totalPnL !== 'number') throw new Error(`${check.path} risk.totalPnL must be a number`);
+        if (typeof r.positionCount !== 'number') throw new Error(`${check.path} risk.positionCount must be a number`);
+        if (!r.status) throw new Error(`${check.path} risk.status missing`);
+      }
+
+      if (check._riskLiveCheck) {
+        if (response.status !== 503) throw new Error(`${check.path} live mode must return 503, got ${response.status}`);
+        if (!parsed.error) throw new Error(`${check.path} live mode 503 missing error message`);
+      }
+
+      if (check._riskExposureCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        const e = parsed.exposure;
+        if (!e) throw new Error(`${check.path} missing exposure object`);
+        if (typeof e.gross !== 'number') throw new Error(`${check.path} exposure.gross must be a number`);
+      }
+
+      if (check._riskDrawdownCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        const d = parsed.drawdown;
+        if (!d) throw new Error(`${check.path} missing drawdown object`);
+        if (!Array.isArray(d.series)) throw new Error(`${check.path} drawdown.series must be an array`);
+        if (typeof d.maxDrawdown !== 'number') throw new Error(`${check.path} drawdown.maxDrawdown must be a number`);
+      }
+
+      if (check._riskVarCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.var !== 'number') throw new Error(`${check.path} var must be a number`);
+        if (typeof parsed.confidence !== 'number') throw new Error(`${check.path} confidence must be a number`);
+        if (typeof parsed.horizon !== 'number') throw new Error(`${check.path} horizon must be a number`);
+      }
+
+      if (check._riskLimitsCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        const l = parsed.limits;
+        if (!l) throw new Error(`${check.path} missing limits object`);
+        if (l.status !== 'not_configured') throw new Error(`${check.path} limits.status must be 'not_configured'`);
+        if (typeof l.killSwitchActive !== 'boolean') throw new Error(`${check.path} limits.killSwitchActive must be boolean`);
+      }
+
+      if (check._riskAlertsCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.alerts)) throw new Error(`${check.path} alerts must be an array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} count must be a number`);
+      }
+
+      // ── ML worker route checks (/api/ml/*) ────────────────────────────────────
+      if (check._mlWorkerHealthCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.workerAlive !== 'boolean') throw new Error(`${check.path} missing workerAlive boolean`);
+      }
+
+      if (check._mlWorkerModelCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+      }
+
+      if (check._mlWorkerPredCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.predictions)) throw new Error(`${check.path} predictions must be an array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} count must be a number`);
+      }
+
+      if (check._mlWorkerRunsCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.activeJobs)) throw new Error(`${check.path} activeJobs must be an array`);
+      }
+
+      if (check._mlWorkerCardCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+      }
+
+      if (check._mlWorkerFICheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.features)) throw new Error(`${check.path} features must be an array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} count must be a number`);
+      }
+
+      if (check._mlWorkerDriftCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        const dr = parsed.drift;
+        if (!dr) throw new Error(`${check.path} missing drift object`);
+        if (dr.status !== 'not_enough_data') throw new Error(`${check.path} drift.status must be 'not_enough_data' without a trained model`);
+      }
+
+      if (check._mlWorkerSignalCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.symbol !== 'SPY') throw new Error(`${check.path} symbol must be 'SPY'`);
+        if (parsed.signal !== null) throw new Error(`${check.path} signal must be null without cached inference`);
+        if (parsed.status !== 'no_cached_signal') throw new Error(`${check.path} status must be 'no_cached_signal'`);
       }
 
       // ── Phase 9: ML engine checks ────────────────────────────────────────────
