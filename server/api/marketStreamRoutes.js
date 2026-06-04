@@ -5,13 +5,38 @@ import { feedManager } from '../feeds/feedManager.js';
 const marketStreamRoutes = Router();
 
 // GET /api/providers/health
-// Extended provider health: MarketStreamEngine adapter states + feedManager yahoo health
+// Extended provider health: MarketStreamEngine adapter states + feedManager yahoo health + canonical provider list
 marketStreamRoutes.get('/providers/health', (_req, res) => {
   const streamHealth = marketStreamEngine.getProviderHealth();
   const yahooHealth = feedManager.getProviderHealth('yahoo');
+  const canonicalProviders = feedManager.listProviders().map((p) => ({
+    id: p.id,
+    label: p.name || p.id,
+    requiresCredentials: Boolean(p.requiresCredentials),
+    credentialStatus: !p.requiresCredentials
+      ? 'not_required'
+      : p.configured ? 'configured' : 'missing_credentials',
+    runtimeStatus: p.status || 'unknown',
+    active: Boolean(p.active),
+    selected: Boolean(p.active),
+    connected: Boolean(p.connected),
+    realtime: Boolean(p.supportsTicks && p.connected),
+    delayed: Boolean(p.supportsCandles),
+    priority: typeof p.priority === 'number' ? p.priority : -1,
+    warnings: Array.isArray(p.warnings) ? p.warnings : [],
+    capabilities: {
+      realtime: Boolean(p.supportsTicks),
+      delayed: Boolean(p.supportsCandles),
+      candles: Boolean(p.supportsCandles),
+      ticks: Boolean(p.supportsTicks),
+      orderbook: Boolean(p.supportsOrderBook),
+    },
+  }));
   return res.json({
+    ok: true,
     success: true,
     providers: streamHealth,
+    canonicalProviders,
     yahooHealth,
     timestamp: new Date().toISOString(),
   });
