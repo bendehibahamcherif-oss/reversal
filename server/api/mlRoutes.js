@@ -306,6 +306,16 @@ mlRoutes.post('/train', (req, res) => {
   return res.status(200).json({ ok: true, jobId, symbol, message: 'Training started', startedAt });
 });
 
+// ── GET /api/ml/predictions ───────────────────────────────────────────────────
+//
+// Returns recent inference history. The current architecture uses a stateless
+// persistent worker; results are not persisted between requests. Returns an
+// empty list until a persistence layer is added (P1-6 in audit report).
+
+mlRoutes.get('/predictions', (_req, res) => {
+  return res.status(200).json({ ok: true, predictions: [], count: 0 });
+});
+
 // ── GET /api/ml/training-runs ─────────────────────────────────────────────────
 //
 // Lists active (in-flight) training jobs.
