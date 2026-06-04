@@ -38,7 +38,23 @@ portfolioRoutes.get('/summary', async (req, res) => {
 portfolioRoutes.get('/drawdown', (req, res) => {
   try {
     const result = portfolioEngine.getDrawdown(parseMode(req));
-    return replyWithEngineResult(res, result);
+    if (result.error && result.code) {
+      return res.status(result.code).json({ success: false, error: result.error });
+    }
+    const series = Array.isArray(result.series)
+      ? result.series.map((s) => (typeof s === 'object' ? Number(s.drawdownPct ?? s.drawdown ?? 0) : Number(s)))
+      : [];
+    const currentDrawdown = series.length ? series[series.length - 1] : 0;
+    return res.json({
+      ok:     true,
+      drawdown: {
+        series,
+        currentDrawdown: Number(currentDrawdown) || 0,
+        maxDrawdown:     Number(result.maxDrawdown) || 0,
+        maxDrawdownPct:  Number(result.maxDrawdownPct) || 0,
+      },
+      mode: result.mode,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -81,10 +97,17 @@ portfolioRoutes.get('/exposure', async (req, res) => {
   try {
     const result = await portfolioEngine.getSummary(parseMode(req));
     if (result.error) return replyWithEngineResult(res, result);
+    const exp = result.exposure ?? {};
     return res.json({
-      ok:       true,
-      exposure: result.exposure ?? { gross: 0, net: 0, long: 0, short: 0 },
-      mode:     result.mode,
+      ok: true,
+      exposure: {
+        gross:    Number(exp.gross)    || 0,
+        net:      Number(exp.net)      || 0,
+        long:     Number(exp.long)     || 0,
+        short:    Number(exp.short)    || 0,
+        leverage: Number(exp.leverage) || 0,
+      },
+      mode: result.mode,
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });

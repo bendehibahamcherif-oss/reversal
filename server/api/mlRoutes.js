@@ -310,17 +310,17 @@ mlRoutes.post('/train', (req, res) => {
 //
 // Returns recent inference history. The current architecture uses a stateless
 // persistent worker; results are not persisted between requests. Returns an
-// empty list until a persistence layer is added (P1-6 in audit report).
+// empty list until a persistence layer is added.
 
 mlRoutes.get('/predictions', (_req, res) => {
-  return res.status(200).json({ ok: true, predictions: [], count: 0 });
+  return res.status(200).json({ ok: true, predictions: [], count: 0, total: 0 });
 });
 
-// ── GET /api/ml/training-runs ─────────────────────────────────────────────────
+// ── GET /api/ml/training-runs (also /model-runs for frontend compat) ──────────
 //
 // Lists active (in-flight) training jobs.
 
-mlRoutes.get('/training-runs', (_req, res) => {
+function _trainingRunsHandler(_req, res) {
   const jobs = Array.from(_trainingJobs.values()).map((j) => ({
     jobId:     j.jobId,
     symbol:    j.symbol,
@@ -329,7 +329,10 @@ mlRoutes.get('/training-runs', (_req, res) => {
     status:    'running',
   }));
   return res.status(200).json({ ok: true, activeJobs: jobs, count: jobs.length });
-});
+}
+
+mlRoutes.get('/training-runs', _trainingRunsHandler);
+mlRoutes.get('/model-runs',    _trainingRunsHandler);
 
 // ── GET /api/ml/model-card ────────────────────────────────────────────────────
 
