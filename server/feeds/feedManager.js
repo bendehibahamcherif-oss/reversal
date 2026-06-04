@@ -86,11 +86,17 @@ class FeedManager {
       normalizedEnabled[providerId] = explicit;
     }
 
-    const validProviders = deduped.filter((providerId) => normalizedEnabled[providerId]).filter((providerId) => this.getRuntimeState(providerId).valid);
+    const preferredOrder = ['yahoo', 'twelvedata', DEFAULT_FALLBACK_PROVIDER];
+    const orderedRequested = [...preferredOrder, ...deduped.filter((id) => !preferredOrder.includes(id))];
+    const isTechValid = (id) => {
+      const rt = this.validateProviderRuntime(id);
+      return rt.providerInitialized && rt.usable && rt.credentialLoaded;
+    };
     const warnings = [];
-    let finalProviders = validProviders;
-    if (!finalProviders.length && allowEmergencyFallback) {
-      finalProviders = [DEFAULT_FALLBACK_PROVIDER];
+    const validProviders = orderedRequested.filter((id) => normalizedEnabled[id]).filter((id) => isTechValid(id));
+    const fallbackOrdered = available.filter((id) => normalizedEnabled[id] && isTechValid(id));
+    let finalProviders = validProviders.length ? validProviders : fallbackOrdered.length ? fallbackOrdered : [DEFAULT_FALLBACK_PROVIDER];
+    if (!validProviders.length && !fallbackOrdered.length) {
       normalizedEnabled[DEFAULT_FALLBACK_PROVIDER] = true;
       warnings.push('No viable providers were available; fallback_demo was selected as an explicit emergency fallback.');
     }
@@ -282,8 +288,17 @@ class FeedManager {
   }
 
   setActiveProviders({ providers = [], enabledByProvider = {}, symbols = [] } = {}) {
-    const explicitProviders = Array.isArray(providers) && providers.length ? providers : this.activeProviders;
-    const resolved = this.resolveActiveState({ providers: explicitProviders, enabledByProvider: { ...this.enabledByProvider, ...(enabledByProvider || {}) }, symbols: Array.isArray(symbols) ? symbols : this.activeSymbols });
+    const fallbackPrevious = { providers: this.activeProviders, enabledByProvider: this.enabledByProvider, symbols: this.activeSymbols };
+    let baseEnabled = { ...this.enabledByProvider };
+    if (Array.isArray(providers) && providers.length > 0) {
+      for (const id of providerRegistry.list().map((p) => p.id)) {
+        baseEnabled[id] = providers.includes(id);
+      }
+    }
+    const mergedEnabled = { ...baseEnabled, ...(enabledByProvider || {}) };
+    const providerInput = Array.isArray(providers) ? providers : fallbackPrevious.providers;
+    const resolved = this.resolveActiveState({ providers: providerInput.length ? providerInput : fallbackPrevious.providers, enabledByProvider: mergedEnabled, symbols: Array.isArray(symbols) ? symbols : fallbackPrevious.symbols });
+    if (!resolved.providers.length && fallbackPrevious.providers.length) return this.getActiveProviders();
     this.activeProviders = resolved.providers;
     this.enabledByProvider = resolved.enabledByProvider;
     this.activeSymbols = resolved.symbols;
@@ -297,14 +312,19 @@ class FeedManager {
   toCanonicalProvider(provider) {
     const credentialStatus = !provider.requiresCredentials ? 'not_required' : (provider.configured ? 'configured' : 'missing');
     let runtimeStatus = provider.status || 'unknown';
+    if (runtimeStatus === 'fallback_delayed') runtimeStatus = 'delayed';
     if (credentialStatus === 'configured' && (runtimeStatus === 'missing_credentials' || runtimeStatus.startsWith('configured'))) runtimeStatus = provider.connected ? 'connected' : 'delayed';
     const delayed = Boolean(provider.supportsCandles);
+    const sourceType = provider.id === DEFAULT_FALLBACK_PROVIDER ? 'demo'
+      : provider.type === 'fallback_delayed_unofficial' ? 'delayed_rest'
+      : Boolean(provider.connected) ? 'realtime' : 'market_data';
     return {
       id: provider.id,
       label: provider.name || provider.id,
       requiresCredentials: Boolean(provider.requiresCredentials),
       credentialStatus,
       runtimeStatus,
+      sourceType,
       selected: Boolean(provider.selected),
       active: Boolean(provider.active),
       connected: Boolean(provider.connected),

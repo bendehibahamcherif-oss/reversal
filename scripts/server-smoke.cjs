@@ -56,6 +56,10 @@ const checks = [
   { method: 'GET', path: '/api/feeds/providers' },
   { method: 'POST', path: '/api/feeds/providers/active', body: { providers: ['fallback_demo', 'yahoo'], symbols: ['SPY', 'QQQ'] } },
   { method: 'GET', path: '/api/feeds/providers/active', _feedsActiveCheck: true },
+  // Empty providers list must be rejected with structured error
+  { method: 'POST', path: '/api/feeds/providers/active', body: { providers: [] }, _feedsEmptyProvidersCheck: true },
+  // Yahoo-only selection must persist yahoo and must NOT re-add fallback_demo
+  { method: 'POST', path: '/api/feeds/providers/active', body: { providers: ['yahoo'] }, _feedsYahooOnlyCheck: true },
   { method: 'POST', path: '/api/feeds/providers/polygon/credentials', body: { apiKey: 'fake_polygon_key_12345' }, _feedsCredsCheck: true },
   { method: 'GET', path: '/api/feeds/providers/polygon' },
   { method: 'DELETE', path: '/api/feeds/providers/polygon/credentials', _feedsCredsDeleteCheck: true },
@@ -357,7 +361,7 @@ async function run() {
           && !check._mlChampion404 && !check._mlInferenceNoChampion && !check._mlFI404 && !check._mlDrift404
           && !check._execLiveModeBlocked && !check._execRiskRejected && !check._execCancelFilled
           && !check._omsNotFound && !check._instBadPack && !check._obsSessionGuardLive && !check._obsSessionGuardPaper
-          && !check._riskLiveCheck) {
+          && !check._riskLiveCheck && !check._feedsEmptyProvidersCheck) {
         throw new Error(`${check.method} ${path} failed with ${response.status}: ${JSON.stringify(parsed)}`);
       }
 
@@ -582,6 +586,18 @@ async function run() {
         if (!Array.isArray(parsed.activeProviders)) throw new Error(`${check.path} missing activeProviders array`);
       }
 
+      if (check._feedsEmptyProvidersCheck) {
+        if (response.status !== 400) throw new Error(`${check.path} empty providers must return 400, got ${response.status}`);
+        if (!parsed.error?.code || parsed.error.code !== 'NO_PROVIDER_SELECTED') throw new Error(`${check.path} error.code must be 'NO_PROVIDER_SELECTED'`);
+      }
+
+      if (check._feedsYahooOnlyCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.activeProviders)) throw new Error(`${check.path} missing activeProviders array`);
+        if (!parsed.activeProviders.includes('yahoo')) throw new Error(`${check.path} yahoo must be in activeProviders`);
+        if (parsed.activeProviders.includes('fallback_demo')) throw new Error(`${check.path} fallback_demo must NOT be silently added when user saves yahoo-only`);
+      }
+
       if (check._providersHealthCheck) {
         if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
         if (!Array.isArray(parsed.canonicalProviders)) throw new Error(`${check.path} missing canonicalProviders array`);
@@ -590,6 +606,11 @@ async function run() {
         if (!first.id) throw new Error(`${check.path} canonicalProviders[0] missing id`);
         if (!first.credentialStatus) throw new Error(`${check.path} canonicalProviders[0] missing credentialStatus`);
         if (!first.capabilities) throw new Error(`${check.path} canonicalProviders[0] missing capabilities`);
+        if (!first.runtimeStatus) throw new Error(`${check.path} canonicalProviders[0] missing runtimeStatus`);
+        if (!first.sourceType) throw new Error(`${check.path} canonicalProviders[0] missing sourceType`);
+        // yahoo runtimeStatus must never be 'fallback_delayed' — must be normalized to 'delayed'
+        const yahoo = parsed.canonicalProviders.find((p) => p.id === 'yahoo');
+        if (yahoo && yahoo.runtimeStatus === 'fallback_delayed') throw new Error(`${check.path} yahoo.runtimeStatus must not be 'fallback_delayed' — normalize to 'delayed'`);
       }
 
       if (check.method === 'GET' && check.path === '/api/feeds/providers/polygon') {
@@ -714,6 +735,9 @@ async function run() {
 
       if (check._mlWorkerModelCheck) {
         if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!('champion' in parsed)) throw new Error(`${check.path} missing champion field`);
+        if (!Array.isArray(parsed.challengers)) throw new Error(`${check.path} challengers must be an array`);
+        if (!parsed.status) throw new Error(`${check.path} missing status field (expected 'no_model' or 'model_loaded')`);
       }
 
       if (check._mlWorkerPredCheck) {
@@ -725,10 +749,14 @@ async function run() {
       if (check._mlWorkerRunsCheck) {
         if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
         if (!Array.isArray(parsed.activeJobs)) throw new Error(`${check.path} activeJobs must be an array`);
+        if (!Array.isArray(parsed.runs)) throw new Error(`${check.path} runs alias must be an array`);
+        if (!Array.isArray(parsed.models)) throw new Error(`${check.path} models alias must be an array`);
       }
 
       if (check._mlWorkerCardCheck) {
         if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!('modelCard' in parsed)) throw new Error(`${check.path} missing modelCard field`);
+        if (!parsed.status) throw new Error(`${check.path} missing status field`);
       }
 
       if (check._mlWorkerFICheck) {

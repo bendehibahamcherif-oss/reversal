@@ -38,7 +38,11 @@ feedRoutes.get('/providers/active', (_req, res) => {
 });
 
 feedRoutes.post('/providers/active', (req, res) => {
-  const result = feedManager.saveActiveProviders(req.body || {});
+  const body = req.body || {};
+  if (Array.isArray(body.providers) && body.providers.length === 0 && !body.allowEmpty) {
+    return res.status(400).json({ ok: false, success: false, error: { code: 'NO_PROVIDER_SELECTED', message: 'Select at least one provider.' } });
+  }
+  const result = feedManager.saveActiveProviders(body);
   if (!result.ok) {
     return res.status(result.status || 400).json({ success: false, error: result.error });
   }
