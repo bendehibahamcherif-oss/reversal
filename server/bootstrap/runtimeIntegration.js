@@ -35,6 +35,7 @@ import multiAssetRoutes from '../api/multiAssetRoutes.js';
 import macroRoutes from '../api/macroRoutes.js';
 import institutionalRoutes from '../api/institutionalRoutes.js';
 import obsRoutes from '../api/observabilityRoutes.js';
+import historicalRoutes from '../api/historicalRoutes.js';
 import { requestMiddleware } from '../observability/requestMiddleware.js';
 import { marketSessionGuard } from '../observability/marketSession.js';
 import { strictRateLimiter }  from '../../security/rateLimiter.js';
@@ -116,4 +117,5 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/macro', macroRoutes);
   app.use('/api/institutional', strictRateLimiter(), institutionalRoutes);
   app.use('/api/observability', obsRoutes);
+  app.use('/api/historical', historicalRoutes);
 }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { multiAssetEngine } from '../multiAsset/multiAssetEngine.js';
+import { getDataset } from '../historical/historicalDataService.js';
 
 const multiAssetRoutes = Router();
 
@@ -17,13 +18,21 @@ function parseWindow(raw) {
 // ── Correlation matrix ────────────────────────────────────────────────────────
 
 // GET /api/multi-asset/correlation
-// Query: symbols (comma-separated), timeframe, window
-// Response: { ok, matrix, symbols, window, timeframe, source }
+// Query: symbols (comma-separated), timeframe, window, datasetId (optional)
+// Response: { ok, matrix, symbols, window, timeframe, source, dataSource? }
 multiAssetRoutes.get('/correlation', (req, res) => {
   const symbols = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'GLD', 'TLT'];
   const timeframe = req.query.timeframe || '1d';
   const window = parseWindow(req.query.window) ?? 20;
-  return res.status(200).json({ ok: true, matrix: [], symbols, window, timeframe, status: 'not_enough_data' });
+
+  let dataSource = null;
+  if (req.query.datasetId) {
+    const record = getDataset(req.query.datasetId);
+    if (!record) return res.status(404).json({ ok: false, error: 'dataset_not_found', datasetId: req.query.datasetId });
+    dataSource = { datasetId: req.query.datasetId, symbol: record.symbol, timeframe: record.timeframe, provider: record.provider };
+  }
+
+  return res.status(200).json({ ok: true, matrix: [], symbols, window, timeframe, status: 'not_enough_data', dataSource });
 });
 
 // ── Rolling beta ──────────────────────────────────────────────────────────────

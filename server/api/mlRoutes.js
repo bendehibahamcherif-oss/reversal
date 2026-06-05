@@ -15,9 +15,11 @@
  */
 
 import { Router }        from 'express';
-import { readFile } from 'node:fs/promises';
+import { readFile }      from 'node:fs/promises';
+import { existsSync }    from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { getDataset }    from '../historical/historicalDataService.js';
 
 import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
                                                from './pythonInference.js';
@@ -223,8 +225,22 @@ mlRoutes.get('/model', async (_req, res) => {
 // Spawn a background Python training run. Returns immediately with a jobId.
 
 mlRoutes.post('/train', async (req, res) => {
+  const body = { ...(req.body || {}) };
+
+  // Resolve datasetId → datasetPath before handing off to trainingService
+  if (body.datasetId && !body.datasetPath) {
+    const record = getDataset(String(body.datasetId));
+    if (!record) {
+      return res.status(404).json({ ok: false, error: 'dataset_not_found', code: 'DATASET_NOT_FOUND', datasetId: body.datasetId });
+    }
+    if (!existsSync(record.filePath)) {
+      return res.status(404).json({ ok: false, error: 'dataset_file_not_found', code: 'DATASET_FILE_MISSING', filePath: record.filePath });
+    }
+    body.datasetPath = record.filePath;
+  }
+
   try {
-    const result = await trainingService.train(req.body || {});
+    const result = await trainingService.train(body);
     return res.status(200).json(result);
   } catch (err) {
     log.error('train endpoint error', { error: err.message });

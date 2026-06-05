@@ -126,6 +126,9 @@ const checks = [
   { method: 'GET', path: '/api/ml/signal/SPY',       _mlWorkerSignalCheck: true },
   { method: 'GET', path: '/api/ml/metrics',          _mlMetricsCheck: true },
   { method: 'GET', path: '/api/ml/worker/status',    _mlWorkerStatusCheck: true },
+  { method: 'GET', path: '/api/historical/status',   _historicalStatusCheck: true },
+  { method: 'GET', path: '/api/historical/providers', _historicalProvidersCheck: true },
+  { method: 'GET', path: '/api/historical/datasets',  _historicalDatasetsCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -794,6 +797,31 @@ async function run() {
         if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
         if (typeof parsed.workerAlive !== 'boolean') throw new Error(`${check.path} missing workerAlive boolean`);
         if (!parsed.status) throw new Error(`${check.path} missing status field`);
+      }
+
+      if (check._historicalStatusCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (parsed.service !== 'historical-data') throw new Error(`${check.path} missing service:'historical-data'`);
+        if (typeof parsed.datasetCount !== 'number') throw new Error(`${check.path} missing datasetCount`);
+        if (!Array.isArray(parsed.providers)) throw new Error(`${check.path} missing providers array`);
+        if (parsed.providers.length === 0) throw new Error(`${check.path} providers array must not be empty`);
+      }
+
+      if (check._historicalProvidersCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.providers)) throw new Error(`${check.path} missing providers array`);
+        const required = ['yahoo', 'twelvedata', 'polygon', 'alphaVantage'];
+        for (const id of required) {
+          const p = parsed.providers.find((x) => x.id === id);
+          if (!p) throw new Error(`${check.path} missing provider: ${id}`);
+          if (!Array.isArray(p.timeframes)) throw new Error(`${check.path} provider ${id} missing timeframes`);
+        }
+      }
+
+      if (check._historicalDatasetsCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!Array.isArray(parsed.datasets)) throw new Error(`${check.path} missing datasets array`);
+        if (typeof parsed.count !== 'number') throw new Error(`${check.path} missing count`);
       }
 
       // ── Phase 9: ML engine checks ────────────────────────────────────────────
