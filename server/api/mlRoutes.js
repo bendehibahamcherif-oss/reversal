@@ -16,7 +16,7 @@
 
 import { Router }        from 'express';
 import { spawn }         from 'node:child_process';
-import { readFile }      from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { randomUUID }    from 'node:crypto';
@@ -36,6 +36,7 @@ const __dirname   = dirname(__filename);
 const MODELS_DIR     = resolve(__dirname, '..', 'ai', 'models');
 const MODEL_METADATA = resolve(MODELS_DIR, 'model_metadata.json');
 const TRAIN_SCRIPT   = resolve(__dirname, '..', 'ai', 'training', 'train_pipeline.py');
+const TRAIN_DATASET  = resolve(__dirname, '..', 'ai', 'datasets', 'snapshot.parquet');
 
 // ── In-memory training job registry ──────────────────────────────────────────
 
@@ -109,6 +110,25 @@ const mlRoutes = Router();
 mlRoutes.post('/infer/:symbol', async (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
 
+  // Check champion availability before validating feature payloads. The
+  // production UI may probe live inference on load; when no model exists, the
+  // route should render a no-champion empty state instead of a validation error.
+  let meta;
+  try {
+    const raw = await readFile(MODEL_METADATA, 'utf-8');
+    meta = JSON.parse(raw);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(200).json({
+        ok:      false,
+        status:  'no_champion_model',
+        message: 'No champion model available. Train and promote a model first.',
+      });
+    }
+    log.error('model metadata read error', { symbol, error: err.message });
+    return res.status(500).json({ ok: false, error: 'Failed to read model metadata', code: 'MODEL_READ_ERROR' });
+  }
+
   try {
     validateRequestBody(req.body);
   } catch (err) {
@@ -130,23 +150,6 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
     timeframe:    timeframe || null,
     featureCount: Object.keys(features).length,
   });
-
-  // Load model metadata for feature alignment and label mapping
-  let meta;
-  try {
-    const raw = await readFile(MODEL_METADATA, 'utf-8');
-    meta = JSON.parse(raw);
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return res.status(200).json({
-        ok:      false,
-        status:  'no_champion_model',
-        message: 'No champion model available. Train and promote a model first.',
-      });
-    }
-    log.error('model metadata read error', { symbol, error: err.message });
-    return res.status(500).json({ ok: false, error: 'Failed to read model metadata', code: 'MODEL_READ_ERROR' });
-  }
 
   const featureNames = Array.isArray(meta.feature_names) ? meta.feature_names : [];
   const invLabelMap  = (meta.inv_label_map && typeof meta.inv_label_map === 'object')
@@ -270,7 +273,7 @@ mlRoutes.get('/model', async (_req, res) => {
 //
 // Spawn a background Python training run. Returns immediately with a jobId.
 
-mlRoutes.post('/train', (req, res) => {
+mlRoutes.post('/train', async (req, res) => {
   const { valid, errors } = _validateTrainBody(req.body);
   if (!valid) {
     return res.status(400).json({ ok: false, error: errors.join('; '), code: 'INVALID_INPUT', errors });
@@ -283,8 +286,36 @@ mlRoutes.post('/train', (req, res) => {
   const jobId     = randomUUID();
   const startedAt = new Date().toISOString();
 
+  if (req.body.dryRun === true) {
+    return res.status(200).json({
+      ok:      false,
+      status:  'training_unavailable',
+      message: 'Training worker or dataset is not available.',
+      details: { worker: 'not_started_dry_run', dataset: 'not_checked' },
+      symbol,
+    });
+  }
+
+  try {
+    await access(TRAIN_SCRIPT);
+    await access(TRAIN_DATASET);
+  } catch (err) {
+    const missingDataset = err?.path === TRAIN_DATASET || err?.code === 'ENOENT';
+    return res.status(200).json({
+      ok:      false,
+      status:  'training_unavailable',
+      message: 'Training worker or dataset is not available.',
+      details: {
+        worker: missingDataset ? 'stopped' : 'missing_or_unavailable',
+        dataset: missingDataset ? 'missing_or_empty' : 'not_checked',
+      },
+      symbol,
+    });
+  }
+
   const args = [
     TRAIN_SCRIPT,
+    '--data',           TRAIN_DATASET,
     '--symbol',         symbol,
     '--horizon',        String(horizon),
     '--up-threshold',   String(tauUp),
@@ -340,15 +371,17 @@ mlRoutes.post('/train', (req, res) => {
 // persistent worker; results are not persisted between requests. Returns an
 // empty list until a persistence layer is added.
 
-mlRoutes.get('/predictions', (_req, res) => {
-  return res.status(200).json({ ok: true, predictions: [], count: 0, total: 0 });
+mlRoutes.get('/predictions', (req, res) => {
+  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase().trim() : 'SPY';
+  return res.status(200).json({ ok: true, predictions: [], symbol, status: 'empty', count: 0, total: 0 });
 });
 
 // ── GET /api/ml/training-runs (also /model-runs for frontend compat) ──────────
 //
 // Lists active (in-flight) training jobs.
 
-function _trainingRunsHandler(_req, res) {
+function _trainingRunsHandler(req, res) {
+  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase().trim() : 'SPY';
   const jobs = Array.from(_trainingJobs.values()).map((j) => ({
     jobId:     j.jobId,
     symbol:    j.symbol,
@@ -357,7 +390,7 @@ function _trainingRunsHandler(_req, res) {
     status:    'running',
   }));
   // activeJobs is the canonical field; runs/models are aliases for frontend compat
-  return res.status(200).json({ ok: true, activeJobs: jobs, runs: jobs, models: jobs, count: jobs.length });
+  return res.status(200).json({ ok: true, activeJobs: jobs, runs: jobs, models: jobs, symbol, status: jobs.length ? 'running' : 'empty', count: jobs.length });
 }
 
 mlRoutes.get('/training-runs', _trainingRunsHandler);
@@ -367,14 +400,10 @@ mlRoutes.get('/model-runs',    _trainingRunsHandler);
 
 const MODEL_CARD = resolve(MODELS_DIR, 'model_card.md');
 
-mlRoutes.get('/model-card', async (req, res) => {
+mlRoutes.get('/model-card', async (_req, res) => {
   try {
     const content = await readFile(MODEL_CARD, 'utf-8');
-    if (req.headers?.accept?.includes('application/json')) {
-      return res.status(200).json({ ok: true, content, modelCard: content, status: 'available' });
-    }
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    return res.status(200).send(content);
+    return res.status(200).json({ ok: true, content, modelCard: content, status: 'available' });
   } catch (err) {
     if (err.code === 'ENOENT') {
       return res.status(200).json({
@@ -469,6 +498,7 @@ mlRoutes.get('/feature-importance', async (req, res) => {
       modelVersion: modelVersion       || meta.best_model || null,
       trainedAt:    meta.trained_at    || null,
       features:     scores,
+      status:       scores.length ? 'available' : 'no_model',
       count:        scores.length,
     });
   } catch (err) {
@@ -477,7 +507,7 @@ mlRoutes.get('/feature-importance', async (req, res) => {
         ok:       true,
         features: [],
         count:    0,
-        status:   'no_champion',
+        status:   'no_model',
         message:  'No champion model — train a model first',
       });
     }
@@ -582,5 +612,14 @@ function _workerErrorToStatus(code) {
     default:                      return 500;
   }
 }
+
+mlRoutes.use((req, res) => {
+  return res.status(404).json({
+    ok: false,
+    status: 'not_found',
+    error: 'ML endpoint not found',
+    endpoint: req.originalUrl || req.path,
+  });
+});
 
 export default mlRoutes;

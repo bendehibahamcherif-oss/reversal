@@ -32,6 +32,7 @@ import riskRoutes from '../api/riskRoutes.js';
 import executionRoutes from '../api/executionRoutes.js';
 import omsRoutes from '../api/omsRoutes.js';
 import multiAssetRoutes from '../api/multiAssetRoutes.js';
+import macroRoutes from '../api/macroRoutes.js';
 import institutionalRoutes from '../api/institutionalRoutes.js';
 import obsRoutes from '../api/observabilityRoutes.js';
 import { requestMiddleware } from '../observability/requestMiddleware.js';
@@ -112,6 +113,7 @@ export function applyRuntimeIntegration(app) {
   app.use('/api/execution', strictRateLimiter(), executionRoutes);
   app.use('/api/oms', strictRateLimiter(), omsRoutes);
   app.use('/api/multi-asset', multiAssetRoutes);
+  app.use('/api/macro', macroRoutes);
   app.use('/api/institutional', strictRateLimiter(), institutionalRoutes);
   app.use('/api/observability', obsRoutes);
 }

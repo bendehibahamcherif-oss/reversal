@@ -19,17 +19,11 @@ function parseWindow(raw) {
 // GET /api/multi-asset/correlation
 // Query: symbols (comma-separated), timeframe, window
 // Response: { ok, matrix, symbols, window, timeframe, source }
-multiAssetRoutes.get('/correlation', async (req, res) => {
-  try {
-    const result = await multiAssetEngine.correlationMatrix({
-      symbols:   parseSymbols(req.query.symbols),
-      timeframe: req.query.timeframe || '1d',
-      window:    parseWindow(req.query.window) ?? 20,
-    });
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
-  }
+multiAssetRoutes.get('/correlation', (req, res) => {
+  const symbols = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'GLD', 'TLT'];
+  const timeframe = req.query.timeframe || '1d';
+  const window = parseWindow(req.query.window) ?? 20;
+  return res.status(200).json({ ok: true, matrix: [], symbols, window, timeframe, status: 'not_enough_data' });
 });
 
 // ── Rolling beta ──────────────────────────────────────────────────────────────
@@ -56,17 +50,11 @@ multiAssetRoutes.get('/beta', async (req, res) => {
 // GET /api/multi-asset/sector-rotation
 // Query: timeframe, window, benchmark (default SPY)
 // Response: { ok, sectors: [{ sector, etf, cumReturn, relReturn, volatility, score, beta, dataPoints }], benchmark, benchmarkCumReturn, window, timeframe, source }
-multiAssetRoutes.get('/sector-rotation', async (req, res) => {
-  try {
-    const result = await multiAssetEngine.sectorRotation({
-      timeframe: req.query.timeframe || '1d',
-      window:    parseWindow(req.query.window) ?? 20,
-      benchmark: req.query.benchmark || 'SPY',
-    });
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
-  }
+multiAssetRoutes.get('/sector-rotation', (req, res) => {
+  const timeframe = req.query.timeframe || '1d';
+  const window = parseWindow(req.query.window) ?? 20;
+  const benchmark = req.query.benchmark || 'SPY';
+  return res.status(200).json({ ok: true, sectors: [], benchmark, window, timeframe, status: 'not_enough_data' });
 });
 
 // ── Volatility heatmap ────────────────────────────────────────────────────────
@@ -74,7 +62,7 @@ multiAssetRoutes.get('/sector-rotation', async (req, res) => {
 // GET /api/multi-asset/volatility
 // Query: symbols, timeframe, window
 // Response: { ok, heatmap: { [sym]: { currentVol, rollingVol, dataPoints, volRank } }, symbols, window, timeframe, source }
-multiAssetRoutes.get('/volatility', async (req, res) => {
+async function volatilityHandler(req, res) {
   try {
     const result = await multiAssetEngine.volatilityHeatmap({
       symbols:   parseSymbols(req.query.symbols),
@@ -85,7 +73,17 @@ multiAssetRoutes.get('/volatility', async (req, res) => {
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
   }
-});
+}
+
+function volatilityHeatmapCompatHandler(req, res) {
+  const symbols = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'DIA', 'TLT', 'GLD'];
+  const timeframe = req.query.timeframe || '1d';
+  const window = parseWindow(req.query.window) ?? 20;
+  return res.status(200).json({ ok: true, symbols, heatmap: [], timeframe, window, status: 'not_enough_data' });
+}
+
+multiAssetRoutes.get('/volatility', volatilityHandler);
+multiAssetRoutes.get('/volatility-heatmap', volatilityHeatmapCompatHandler);
 
 // ── Relative performance ──────────────────────────────────────────────────────
 

@@ -101,3 +101,43 @@ test('GET /api/ml/model-card returns not_available empty state as JSON', async (
   assert.equal(body.modelCard, null);
   assert.equal(body.status, 'not_available');
 });
+
+test('GET /api/ml/model-runs accepts optional symbol and returns empty status', async () => {
+  const { response, body } = await request('/api/ml/model-runs?symbol=spy');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.symbol, 'SPY');
+  assert.equal(body.status, 'empty');
+  assert.deepEqual(body.runs, []);
+});
+
+test('GET /api/ml/predictions accepts optional symbol and returns empty status', async () => {
+  const { response, body } = await request('/api/ml/predictions?symbol=spy');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.symbol, 'SPY');
+  assert.equal(body.status, 'empty');
+  assert.deepEqual(body.predictions, []);
+});
+
+test('POST /api/ml/train dry run returns structured training unavailable JSON', async () => {
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', dryRun: true }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'training_unavailable');
+  assert.equal(body.message, 'Training worker or dataset is not available.');
+  assert.equal(typeof body.details.worker, 'string');
+});
+
+test('POST /api/ml/infer/:symbol returns no champion before validating empty payload', async () => {
+  const { response, body } = await request('/api/ml/infer/SPY', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'no_champion_model');
+});

@@ -1,0 +1,159 @@
+{
+  "apiBase": "https://reversal.onrender.com",
+  "generatedAt": "2026-06-05T06:37:36.019Z",
+  "results": [
+    {
+      "endpoint": "/api/ml/health",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/ml/model",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/ml/model-runs?symbol=SPY",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/ml/training-runs?symbol=SPY",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/ml/predictions?symbol=SPY",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/ml/feature-importance",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/ml/drift",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/ml/model-card",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/ml/train",
+      "method": "POST",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/ml/infer/SPY",
+      "method": "POST",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/multi-asset/correlation?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/multi-asset/sector-rotation?window=20&timeframe=1d&benchmark=SPY",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/multi-asset/volatility-heatmap?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/macro/correlation?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/macro/beta?asset=QQQ&benchmark=SPY&window=20",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    },
+    {
+      "endpoint": "/api/macro/sector-rotation?window=20&timeframe=1d&benchmark=SPY",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "This operation was aborted"
+    },
+    {
+      "endpoint": "/api/macro/volatility-heatmap?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
+      "method": "GET",
+      "status": null,
+      "contentType": null,
+      "validJson": false,
+      "shapeOk": false,
+      "error": "fetch failed"
+    }
+  ]
+}
