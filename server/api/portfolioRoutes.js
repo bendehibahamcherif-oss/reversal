@@ -45,15 +45,18 @@ portfolioRoutes.get('/drawdown', (req, res) => {
       ? result.series.map((s) => (typeof s === 'object' ? Number(s.drawdownPct ?? s.drawdown ?? 0) : Number(s)))
       : [];
     const currentDrawdown = series.length ? series[series.length - 1] : 0;
+    const mode = result.mode || 'paper';
     return res.json({
-      ok:     true,
+      ok:        true,
+      success:   true,
+      modeBadge: String(mode).toUpperCase(),
       drawdown: {
         series,
         currentDrawdown: Number(currentDrawdown) || 0,
         maxDrawdown:     Number(result.maxDrawdown) || 0,
         maxDrawdownPct:  Number(result.maxDrawdownPct) || 0,
       },
-      mode: result.mode,
+      mode,
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

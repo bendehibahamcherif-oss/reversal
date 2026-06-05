@@ -124,6 +124,8 @@ const checks = [
   { method: 'GET', path: '/api/ml/feature-importance', _mlWorkerFICheck: true },
   { method: 'GET', path: '/api/ml/drift',            _mlWorkerDriftCheck: true },
   { method: 'GET', path: '/api/ml/signal/SPY',       _mlWorkerSignalCheck: true },
+  { method: 'GET', path: '/api/ml/metrics',          _mlMetricsCheck: true },
+  { method: 'GET', path: '/api/ml/worker/status',    _mlWorkerStatusCheck: true },
   { method: 'POST', path: '/api/ai/features/save/SPY' },
   { method: 'GET', path: '/api/ai/features/SPY' },
   { method: 'POST', path: '/api/ai/labels/symbol/SPY' },
@@ -777,6 +779,21 @@ async function run() {
         if (parsed.symbol !== 'SPY') throw new Error(`${check.path} symbol must be 'SPY'`);
         if (parsed.signal !== null) throw new Error(`${check.path} signal must be null without cached inference`);
         if (parsed.status !== 'no_cached_signal') throw new Error(`${check.path} status must be 'no_cached_signal'`);
+      }
+
+      if (check._mlMetricsCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (!parsed.drift || typeof parsed.drift !== 'object') throw new Error(`${check.path} missing drift object`);
+        if (parsed.drift.status !== 'not_enough_data') throw new Error(`${check.path} drift.status must be 'not_enough_data'`);
+        if (!parsed.worker || typeof parsed.worker !== 'object') throw new Error(`${check.path} missing worker object`);
+        if (typeof parsed.worker.workerAlive !== 'boolean') throw new Error(`${check.path} worker.workerAlive must be boolean`);
+        if (!parsed.workerStatus) throw new Error(`${check.path} missing workerStatus`);
+      }
+
+      if (check._mlWorkerStatusCheck) {
+        if (!parsed.ok) throw new Error(`${check.path} returned ok:false`);
+        if (typeof parsed.workerAlive !== 'boolean') throw new Error(`${check.path} missing workerAlive boolean`);
+        if (!parsed.status) throw new Error(`${check.path} missing status field`);
       }
 
       // ── Phase 9: ML engine checks ────────────────────────────────────────────

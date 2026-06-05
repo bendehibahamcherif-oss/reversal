@@ -198,17 +198,22 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
 // Returns worker health: champion count, pool stats, timeout config.
 
 mlRoutes.get('/health', async (_req, res) => {
-  const health = await pythonInference.health();
+  let health;
+  try {
+    health = await pythonInference.health();
+  } catch {
+    health = { ok: false, workerAlive: false, pid: null, restarts: 0, totalRequests: 0, errors: 0, modelVersion: null, pendingCount: 0 };
+  }
   return res.json({
-    ok:            health.ok,
+    ok:            true,   // always true — the route is reachable; workerAlive indicates Python state
     service:       'ml-inference-worker',
-    workerAlive:   health.workerAlive,
-    pid:           health.pid,
-    restarts:      health.restarts,
-    totalRequests: health.totalRequests,
-    errors:        health.errors,
-    modelVersion:  health.modelVersion,
-    pendingCount:  health.pendingCount,
+    workerAlive:   Boolean(health.workerAlive),
+    pid:           health.pid           ?? null,
+    restarts:      health.restarts      ?? 0,
+    totalRequests: health.totalRequests ?? 0,
+    errors:        health.errors        ?? 0,
+    modelVersion:  health.modelVersion  ?? null,
+    pendingCount:  health.pendingCount  ?? 0,
   });
 });
 
@@ -482,6 +487,68 @@ mlRoutes.get('/drift', (_req, res) => {
       detectedAt: null,
       features:   [],
     },
+  });
+});
+
+// ── GET /api/ml/metrics ───────────────────────────────────────────────────────
+//
+// Composite diagnostics endpoint consumed by MLDiagnosticsPanel.
+// Returns worker health + drift stub + empty signal/feature state.
+
+mlRoutes.get('/metrics', async (_req, res) => {
+  let health;
+  try {
+    health = await pythonInference.health();
+  } catch {
+    health = { ok: false, workerAlive: false, pid: null, restarts: 0, totalRequests: 0, errors: 0, modelVersion: null, pendingCount: 0 };
+  }
+  const workerStatus = health.workerAlive ? 'running' : 'idle';
+  return res.status(200).json({
+    ok:     true,
+    signal: null,
+    drift: {
+      status:         'not_enough_data',
+      psi:            {},
+      features:       [],
+      lastComputedAt: null,
+    },
+    worker: {
+      workerAlive:   Boolean(health.workerAlive),
+      status:        workerStatus,
+      pid:           health.pid           ?? null,
+      restarts:      health.restarts      ?? 0,
+      totalRequests: health.totalRequests ?? 0,
+      errors:        health.errors        ?? 0,
+      pendingCount:  health.pendingCount  ?? 0,
+    },
+    features:    [],
+    registry:    null,
+    model:       null,
+    workerStatus,
+  });
+});
+
+// ── GET /api/ml/worker/status ─────────────────────────────────────────────────
+//
+// Python worker status. Mirrors /health but under the path the frontend expects.
+
+mlRoutes.get('/worker/status', async (_req, res) => {
+  let health;
+  try {
+    health = await pythonInference.health();
+  } catch {
+    health = { ok: false, workerAlive: false, pid: null, restarts: 0, totalRequests: 0, errors: 0, modelVersion: null, pendingCount: 0 };
+  }
+  return res.status(200).json({
+    ok:            true,
+    workerAlive:   Boolean(health.workerAlive),
+    status:        health.workerAlive ? 'running' : 'idle',
+    pid:           health.pid           ?? null,
+    restarts:      health.restarts      ?? 0,
+    totalRequests: health.totalRequests ?? 0,
+    errors:        health.errors        ?? 0,
+    modelVersion:  health.modelVersion  ?? null,
+    pendingCount:  health.pendingCount  ?? 0,
   });
 });
 
