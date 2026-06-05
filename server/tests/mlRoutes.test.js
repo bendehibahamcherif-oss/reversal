@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
+
+process.env.ML_ARTIFACTS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ml-artifacts-'));
 
 let baseUrl;
 let server;
@@ -43,7 +48,7 @@ test('GET /api/ml/drift returns structured empty drift state', async () => {
   });
 });
 
-test('GET /api/ml/model-runs returns an empty runs array when no training jobs are active', async () => {
+test('GET /api/ml/model-runs returns an empty runs array when no models are registered', async () => {
   const { response, body } = await request('/api/ml/model-runs');
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
@@ -120,16 +125,35 @@ test('GET /api/ml/predictions accepts optional symbol and returns empty status',
   assert.deepEqual(body.predictions, []);
 });
 
-test('POST /api/ml/train dry run returns structured training unavailable JSON', async () => {
+test('POST /api/ml/train with no dataset returns dataset_missing JSON', async () => {
   const { response, body } = await request('/api/ml/train', {
     method: 'POST',
-    body: JSON.stringify({ symbol: 'SPY', dryRun: true }),
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 20 }),
   });
   assert.equal(response.status, 200);
   assert.equal(body.ok, false);
-  assert.equal(body.status, 'training_unavailable');
-  assert.equal(body.message, 'Training worker or dataset is not available.');
-  assert.equal(typeof body.details.worker, 'string');
+  assert.equal(body.status, 'dataset_missing');
+  assert.equal(body.message, 'No dataset snapshot found. Generate or upload a dataset before training.');
+  assert.ok(Array.isArray(body.expectedPaths));
+});
+
+
+
+test('POST /api/ml/train with small synthetic CSV returns JSON not_enough_data', async () => {
+  const datasetPath = path.join(process.env.ML_ARTIFACTS_DIR, 'tiny_features_snapshot.csv');
+  fs.writeFileSync(datasetPath, [
+    'timestamp,symbol,open,high,low,close,volume',
+    '2026-01-01T14:30:00Z,SPY,100,101,99,100.5,1000',
+    '2026-01-01T14:31:00Z,SPY,100.5,101.5,100,101,1200',
+    '2026-01-01T14:32:00Z,SPY,101,102,100.5,101.5,1100',
+  ].join('\n'));
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 2, datasetPath }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'not_enough_data');
 });
 
 test('POST /api/ml/infer/:symbol returns no champion before validating empty payload', async () => {
@@ -140,4 +164,30 @@ test('POST /api/ml/infer/:symbol returns no champion before validating empty pay
   assert.equal(response.status, 200);
   assert.equal(body.ok, false);
   assert.equal(body.status, 'no_champion_model');
+});
+
+test('POST /api/ml/promote/:modelId sets champion and GET /api/ml/model returns it', async () => {
+  const { modelRegistry } = await import('../ai/modelRegistry.js');
+  const model = modelRegistry.register({
+    modelId: 'test-promote-model',
+    symbol: 'SPY',
+    timeframe: '1m',
+    horizon: 20,
+    datasetHash: 'sha256:test',
+    featureSchemaHash: 'sha256:schema',
+    metrics: { accuracy: 0.5 },
+    artifactPath: process.env.ML_ARTIFACTS_DIR,
+    status: 'candidate',
+  });
+  assert.equal(model.status, 'candidate');
+
+  const promoted = await request('/api/ml/promote/test-promote-model', { method: 'POST', body: JSON.stringify({}) });
+  assert.equal(promoted.response.status, 200);
+  assert.equal(promoted.body.ok, true);
+  assert.equal(promoted.body.model.status, 'champion');
+
+  const { response, body } = await request('/api/ml/model');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.champion.modelId, 'test-promote-model');
 });
