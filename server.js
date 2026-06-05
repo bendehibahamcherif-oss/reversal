@@ -238,6 +238,15 @@ app.get('/auth/me', requireAuth, (req, res) => {
   });
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    ok: false,
+    status: 'not_found',
+    error: 'API endpoint not found',
+    endpoint: req.originalUrl || req.path,
+  });
+});
+
 await connectDatabase();
 
 server.listen(PORT, '0.0.0.0', () => {
