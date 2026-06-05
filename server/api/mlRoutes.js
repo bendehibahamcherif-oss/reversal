@@ -204,16 +204,30 @@ mlRoutes.get('/health', async (_req, res) => {
   } catch {
     health = { ok: false, workerAlive: false, pid: null, restarts: 0, totalRequests: 0, errors: 0, modelVersion: null, pendingCount: 0 };
   }
-  return res.json({
-    ok:            true,   // always true — the route is reachable; workerAlive indicates Python state
-    service:       'ml-inference-worker',
-    workerAlive:   Boolean(health.workerAlive),
+  const workerAlive = Boolean(health.workerAlive);
+  const worker = {
+    available:     workerAlive,
+    mode:          workerAlive ? 'running' : 'not_configured',
+    workerAlive,
     pid:           health.pid           ?? null,
     restarts:      health.restarts      ?? 0,
     totalRequests: health.totalRequests ?? 0,
     errors:        health.errors        ?? 0,
     modelVersion:  health.modelVersion  ?? null,
     pendingCount:  health.pendingCount  ?? 0,
+  };
+  return res.json({
+    ok:            true,   // always true — the route is reachable; worker.available indicates Python state
+    status:        'available',
+    service:       'ml-inference-worker',
+    worker,
+    workerAlive,
+    pid:           worker.pid,
+    restarts:      worker.restarts,
+    totalRequests: worker.totalRequests,
+    errors:        worker.errors,
+    modelVersion:  worker.modelVersion,
+    pendingCount:  worker.pendingCount,
   });
 });
 
