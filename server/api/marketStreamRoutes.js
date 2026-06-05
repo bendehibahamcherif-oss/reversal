@@ -13,7 +13,11 @@ marketStreamRoutes.get('/providers/health', (_req, res) => {
   return res.json({
     ok: true,
     success: true,
-    providers: streamHealth,
+    providers: canonical.providers,
+    activeProviders: canonical.activeProviders,
+    providerOrder: canonical.providerOrder,
+    source: canonical.source,
+    streamProviders: streamHealth,
     canonicalProviders: canonical.providers,
     yahooHealth,
     timestamp: new Date().toISOString(),

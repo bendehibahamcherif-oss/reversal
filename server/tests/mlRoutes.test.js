@@ -69,3 +69,35 @@ test('POST /api/ml/infer/:symbol returns no_champion_model empty state when no c
   assert.equal(body.status, 'no_champion_model');
   assert.equal(body.message, 'No champion model available. Train and promote a model first.');
 });
+
+
+test('GET /api/ml/health returns route-available worker contract', async () => {
+  const { response, body } = await request('/api/ml/health');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.status, 'available');
+  assert.equal(typeof body.worker.available, 'boolean');
+  assert.equal(typeof body.worker.mode, 'string');
+});
+
+test('GET /api/ml/predictions returns empty predictions state', async () => {
+  const { response, body } = await request('/api/ml/predictions');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.predictions, []);
+});
+
+test('GET /api/ml/feature-importance returns empty features state when no champion exists', async () => {
+  const { response, body } = await request('/api/ml/feature-importance');
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.features, []);
+});
+
+test('GET /api/ml/model-card returns not_available empty state as JSON', async () => {
+  const { response, body } = await request('/api/ml/model-card', { headers: { accept: 'application/json' } });
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, true);
+  assert.equal(body.modelCard, null);
+  assert.equal(body.status, 'not_available');
+});

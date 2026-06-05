@@ -44,11 +44,13 @@ test.before(async () => {
   delete process.env.ALPHAVANTAGE_API_KEY;
   delete process.env.ALPHA_VANTAGE_KEY;
 
+  const marketStreamRoutes = (await import('../api/marketStreamRoutes.js')).default;
   const providerRoutes = (await import('../api/providerCredentialRoutes.js')).default;
   const feedRoutes = (await import('../api/feedRoutes.js')).default;
   feedManager = (await import('../feeds/feedManager.js')).feedManager;
   const app = express();
   app.use(express.json());
+  app.use('/api', marketStreamRoutes);
   app.use('/api/providers', providerRoutes);
   app.use('/api/feed', feedRoutes);
   server = app.listen(0);
@@ -174,4 +176,16 @@ test('yahoo delayed source reports delayed status instead of connection failure'
   assert.equal(yahoo.warnings.includes('Yahoo is delayed data, not live institutional feed.'), true);
   assert.equal(fallbackDemo.active, false);
   assert.equal(fallbackDemo.warnings.includes('Demo fallback source only. Not live market data.'), false);
+});
+
+
+test('mounted /api/providers/health returns canonical active providers even when stream diagnostics are mounted first', async () => {
+  const { response, body } = await request('/api/providers/health');
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.ok(Array.isArray(body.providers));
+  assert.ok(Array.isArray(body.activeProviders));
+  assert.ok(Array.isArray(body.providerOrder));
+  assert.ok(body.streamProviders && typeof body.streamProviders === 'object');
+  assert.ok(body.providers.every((provider) => Object.hasOwn(provider, 'credentialStatus')));
 });

@@ -117,6 +117,25 @@ portfolioRoutes.get('/exposure', async (req, res) => {
   }
 });
 
+
+// GET /api/portfolio/history?mode=paper
+portfolioRoutes.get('/history', async (req, res) => {
+  try {
+    const result = await portfolioEngine.getSummary(parseMode(req));
+    if (result.error) return replyWithEngineResult(res, result);
+    return res.json({
+      ok: true,
+      success: true,
+      mode: result.mode || parseMode(req),
+      history: [],
+      status: 'no_history',
+      message: 'No portfolio history has been recorded yet.',
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, success: false, error: err.message });
+  }
+});
+
 // POST /api/portfolio/stress-test?mode=paper
 // Body: { scenarios: [{ name: string, shocks: { SYMBOL: number } }] }
 portfolioRoutes.post('/stress-test', async (req, res) => {

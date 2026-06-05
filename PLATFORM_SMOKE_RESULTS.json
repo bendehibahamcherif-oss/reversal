@@ -1,0 +1,467 @@
+{
+  "ok": true,
+  "baseUrl": "http://127.0.0.1:18080",
+  "generatedAt": "2026-06-05T06:01:42.530Z",
+  "summary": {
+    "total": 22,
+    "passed": 22,
+    "failed": 0
+  },
+  "results": [
+    {
+      "method": "GET",
+      "path": "/api/ml/health",
+      "keys": [
+        "ok",
+        "status",
+        "worker"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 16,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "status",
+        "service",
+        "worker",
+        "workerAlive",
+        "pid",
+        "restarts",
+        "totalRequests",
+        "errors",
+        "modelVersion",
+        "pendingCount"
+      ],
+      "bodyStatus": "available"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/model",
+      "keys": [
+        "ok",
+        "champion",
+        "challengers",
+        "status"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 9,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "metadata",
+        "champion",
+        "challengers",
+        "status",
+        "message"
+      ],
+      "bodyStatus": "no_model"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/model-runs",
+      "keys": [
+        "ok",
+        "runs"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 4,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "activeJobs",
+        "runs",
+        "models",
+        "count"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/predictions",
+      "keys": [
+        "ok",
+        "predictions"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 5,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "predictions",
+        "count",
+        "total"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/feature-importance",
+      "keys": [
+        "ok",
+        "features"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "features",
+        "count",
+        "status",
+        "message"
+      ],
+      "bodyStatus": "no_champion"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/drift",
+      "keys": [
+        "ok",
+        "drift"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 5,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "drift"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/model-card",
+      "keys": [
+        "ok",
+        "modelCard",
+        "status"
+      ],
+      "headers": {
+        "accept": "application/json"
+      },
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "content",
+        "modelCard",
+        "status",
+        "message"
+      ],
+      "bodyStatus": "not_available"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/health",
+      "keys": [
+        "success",
+        "providers",
+        "activeProviders"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 12,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "success",
+        "providers",
+        "activeProviders",
+        "providerOrder",
+        "source",
+        "streamProviders",
+        "canonicalProviders",
+        "yahooHealth",
+        "timestamp"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/credentials",
+      "keys": [
+        "success",
+        "credentials"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "success",
+        "credentials"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/active",
+      "keys": [
+        "success",
+        "activeProviders"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "success",
+        "providers",
+        "providerOrder",
+        "enabledByProvider",
+        "symbols",
+        "defaultProvider",
+        "activeProviders"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/feed/status",
+      "keys": [
+        "ok",
+        "success",
+        "providers"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 7,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "success",
+        "activeProviders",
+        "providerOrder",
+        "source",
+        "connected",
+        "providers",
+        "statuses",
+        "warnings"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/feeds/tick/SPY",
+      "keys": [
+        "success"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 17383,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "success",
+        "_raw"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/feeds/candle/SPY",
+      "keys": [
+        "success"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 17302,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "success",
+        "symbol",
+        "timeframe",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source",
+        "timestamp",
+        "_raw"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/feeds/orderbook/SPY",
+      "keys": [
+        "success"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 7,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "success",
+        "_raw"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/summary",
+      "keys": [
+        "ok",
+        "positions",
+        "exposure"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "success",
+        "mode",
+        "modeBadge",
+        "positionCount",
+        "exposure",
+        "totalRealizedPnL",
+        "totalUnrealizedPnL",
+        "totalPnL",
+        "pricesFresh",
+        "pricesAsOf",
+        "positions"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/positions",
+      "keys": [
+        "ok",
+        "positions"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 4,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "success",
+        "positions",
+        "mode",
+        "modeBadge"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/pnl",
+      "keys": [
+        "ok",
+        "pnl"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "pnl",
+        "mode"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/exposure",
+      "keys": [
+        "ok",
+        "exposure"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 5,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "exposure",
+        "mode"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/drawdown",
+      "keys": [
+        "ok",
+        "drawdown"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 4,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "success",
+        "modeBadge",
+        "drawdown",
+        "mode"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk/summary",
+      "keys": [
+        "ok",
+        "risk"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 6,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "mode",
+        "risk"
+      ],
+      "bodyStatus": "not_enough_data"
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk/exposure",
+      "keys": [
+        "ok",
+        "exposure"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 5,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "mode",
+        "exposure"
+      ],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk/drawdown",
+      "keys": [
+        "ok",
+        "drawdown"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 4,
+      "missingKeys": [],
+      "topLevelKeys": [
+        "ok",
+        "mode",
+        "drawdown"
+      ],
+      "bodyStatus": null
+    }
+  ]
+}

@@ -53,7 +53,7 @@ riskRoutes.get('/summary', async (req, res) => {
         realizedPnL:        Number(summary.totalRealizedPnL   ?? 0),
         unrealizedPnL:      Number(summary.totalUnrealizedPnL ?? 0),
         positionCount:      Number(summary.positionCount      ?? 0),
-        status:             summary.positionCount > 0 ? 'active' : 'no_positions',
+        status:             summary.positionCount > 0 ? 'active' : 'not_enough_data',
       },
     });
   } catch (err) {
