@@ -1,193 +1,112 @@
-# Functional Bug Fix Report
-
-Date: 2026-06-04  
-Branch: `claude/feed-chart-routes-format-f6bKw`  
-Backend repo: `bendehibahamcherif-oss/reversal`
-
----
+# Functional Bug Fix Report — ML Endpoints and Provider Persistence
 
 ## 1. Root Causes
 
-### Bug 1 — ML endpoints showing "Endpoint not available"
+- **ML empty states were not fully contractual.** Core ML routes were mounted, but `POST /api/ml/infer/:symbol` returned a legacy `NO_CHAMPION`/422 error when no model metadata existed. Some frontend clients interpret that as endpoint failure instead of the valid no-model state.
+- **Drift payload shape was inconsistent with the expected frontend contract.** `/api/ml/drift` returned an empty state, but used `detectedAt` rather than the expected `lastComputedAt` field.
+- **Provider restore logic trusted stale `enabledByProvider` flags over the explicit saved `providers` list.** Older persisted payloads such as `providers: ["yahoo"]` plus `enabledByProvider.fallback_demo = true` could silently reactivate `fallback_demo`.
+- **Provider order was not always the saved order.** The resolver prepended a hard-coded preferred order, which could reorder user-saved provider selections.
+- **Yahoo delayed REST activity was represented as connected live status in activity promotion.** That made the UI see a contradiction between delayed Yahoo data being available and Yahoo appearing as a connection failure/not-connected source.
+- **Fallback demo warnings leaked when the provider was inactive.** Canonical provider health could include demo warnings even when `fallback_demo` was not active.
 
-**Root cause A**: Routes `/api/ml/signal/:symbol`, `/api/ml/feature-importance`, `/api/ml/drift` were absent from the backend. Frontend `api.js` maps HTTP 404 → throws `Error("Endpoint not available")`. mlStore catches it and sets `modelInfoError / driftError / ...Error = "Endpoint not available"`.
+## 2. Route Registration Audit
 
-**Root cause B**: `/api/ml/model` was returning HTTP 404 when `model_metadata.json` didn't exist. Frontend threw → "Endpoint not available" in ModelHealthCard.
+| Route | Mounted by | Status |
+|---|---|---|
+| `GET /api/ml/health` | `app.use('/api/ml', mlRoutes)` | Present |
+| `GET /api/ml/model` | `app.use('/api/ml', mlRoutes)` | Present; returns `no_model` when metadata is absent |
+| `GET /api/ml/model-runs` | `app.use('/api/ml', mlRoutes)` | Present; alias of training runs |
+| `GET /api/ml/predictions` | `app.use('/api/ml', mlRoutes)` | Present; returns empty predictions |
+| `GET /api/ml/feature-importance` | `app.use('/api/ml', mlRoutes)` | Present; returns empty features without champion |
+| `GET /api/ml/drift` | `app.use('/api/ml', mlRoutes)` | Present; now returns expected structured drift empty state |
+| `GET /api/ml/model-card` | `app.use('/api/ml', mlRoutes)` | Present; returns `not_available` when card is absent |
+| `POST /api/ml/infer/:symbol` | `app.use('/api/ml', mlRoutes)` | Present; now returns `no_champion_model` state without 404/endpoint failure |
+| `POST /api/ml/train` | `app.use('/api/ml', mlRoutes)` | Present |
+| `GET /api/providers/health` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `GET /api/providers/credentials` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `POST /api/providers/credentials/:providerId` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `DELETE /api/providers/credentials/:providerId` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `GET /api/providers/active` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `POST /api/providers/active` | `app.use('/api/providers', providerCredentialRoutes)` | Present |
+| `GET /api/feed/status` | `app.use('/api/feed', feedRoutes)` | Present |
+| `GET /api/feeds/status` | `app.use('/api/feeds', feedRoutes)` | Present, compatible alias to same router |
+| `GET /api/feeds/tick/:symbol` | `app.use('/api/feeds', feedRoutes)` | Present |
+| `GET /api/feeds/candle/:symbol` | `app.use('/api/feeds', feedRoutes)` | Present |
+| `GET /api/feeds/orderbook/:symbol` | `app.use('/api/feeds', feedRoutes)` | Present |
 
-**Root cause C**: Response format mismatches. Frontend mlStore reads `data.champion` for model, `data.models || []` for runs, `data.modelCard` for model-card — backend returned `metadata`, `activeJobs`, `content`. Silent empty-array fallbacks masked the mismatch but downstream rendering may not have rendered correctly.
+## 3. ML Endpoint Fixes
 
-### Bug 2 — fallback_demo impossible to disable
+| Component | Endpoint called | Backend route exists? | Current response before fix | Fix |
+|---|---|---:|---|---|
+| ML Diagnostics & Drift | `GET /api/ml/drift` | Yes | Structured empty response, but timestamp field did not match expected contract | Returned `drift.status = not_enough_data`, `psi = {}`, `features = []`, and `lastComputedAt = null` |
+| Model Registry | `GET /api/ml/model-runs` | Yes | Empty runs were already returned when no active training jobs existed | Added route-level regression coverage to prevent future 404/contract regressions |
+| Champion Model | `GET /api/ml/model` | Yes | Empty champion state already returned as `status: no_model` | Added regression coverage to ensure no-model is not treated as endpoint unavailable |
+| Live Inference | `POST /api/ml/infer/:symbol` | Yes | Missing champion returned legacy 422/`NO_CHAMPION` error | Returns valid no-champion state: `ok: false`, `status: no_champion_model`, and a clear message |
+| Predictions | `GET /api/ml/predictions` | Yes | Empty predictions array already returned | Verified as part of route audit |
+| Feature Importance | `GET /api/ml/feature-importance` | Yes | Empty features already returned without champion | Verified as part of route audit |
+| Model Card | `GET /api/ml/model-card` | Yes | Empty not-available state already returned | Verified as part of route audit |
 
-**Root cause A — `resolveActiveState` stale validity check** (most critical): The validity filter inside `resolveActiveState` called `this.getRuntimeState(id).valid`, which internally reads `this.enabledByProvider[id]` — the OLD instance state. When a user saves `providers: ['yahoo']`, the function builds `normalizedEnabled = { yahoo: true, fallback_demo: false }`, but then checks validity against the OLD state where `this.enabledByProvider.yahoo = false` (because fallback_demo had been forced active previously and yahoo was not). Yahoo fails the validity check → `validProviders = []` → backend falls back to `[DEFAULT_FALLBACK_PROVIDER]`.
+## 4. Provider Selection Fixes
 
-**Root cause B — `setActiveProviders` stale merge**: When `providers: ['yahoo']` is passed without `enabledByProvider`, the merge is `{ ...this.enabledByProvider, ...{} }` — old state wins. If `this.enabledByProvider.fallback_demo = true` from a previous forced addition, fallback_demo stays enabled even though the user explicitly sent `providers: ['yahoo']`.
+- The backend now treats the explicit `providers` list as the saved source of truth when resolving persisted provider state.
+- Stale `enabledByProvider` entries cannot re-add providers that are absent from the explicit saved `providers` list.
+- Provider order now follows the saved/deduped request order rather than a hard-coded preferred order.
+- Empty provider selection now returns a structured 400 validation error with code `NO_PROVIDER_SELECTED` and message `Select at least one provider.`
 
-**Root cause C — (frontend, read-only)**: `LiveDataWorkspace.parsedProviders` merges `activeProviders + selectedProviders + feedStatus.activeProviders`, accumulating stale UI draft state with backend state. Cannot fix from this repo.
+## 5. `fallback_demo` Persistence Fix
 
-### Bug 3 — Yahoo shown as "NOT CONNECTED"
+- `fallback_demo` is not silently re-added when at least one viable explicitly selected provider remains.
+- A stale persisted `enabledByProvider.fallback_demo = true` flag is ignored when `providers` explicitly omits `fallback_demo`.
+- `fallback_demo` warnings only appear in canonical provider status when `fallback_demo` is active.
 
-**Root cause**: `yahooProvider.status()` returned `{ status: 'fallback_delayed', connected: false }`. The `canonicalProviders` construction used `runtimeStatus: p.status` → `'fallback_delayed'`. `ProviderDiagnosticsPanel.jsx` reads `canonical.runtimeStatus` and displays it. `'fallback_delayed'` has no recognized display mapping → shown as unknown/error state. Yahoo is a REST delayed provider and is "not connected" in the WebSocket sense, but IS delivering data.
+## 6. Live Data Status Consistency Fix
 
----
+- Yahoo delayed REST activity now remains canonical delayed data rather than being promoted to websocket-like connected status.
+- Canonical Yahoo status reports:
+  - `runtimeStatus: delayed`
+  - `sourceType: delayed`
+  - `connected: false`
+  - `credentialStatus: not_required`
+  - warning: `Yahoo is delayed data, not live institutional feed.`
+- Demo provider status reports demo warnings only when active.
+- `/api/feed/status` and `/api/providers/health` share the same canonical active provider state.
 
-## 2. ML Endpoint Fixes
+## 7. Files Changed
 
-### 2a — Missing routes (previously fixed in PR #84)
-All three routes were added to `server/api/mlRoutes.js`:
-- `GET /api/ml/signal/:symbol` → `{ ok, symbol, signal: null, status: 'no_cached_signal' }`
-- `GET /api/ml/feature-importance` → `{ ok, features: [], count: 0, status: 'no_champion' }`
-- `GET /api/ml/drift` → `{ ok, drift: { status: 'not_enough_data', psi: {} } }`
+- `server/api/mlRoutes.js`
+- `server/feeds/feedManager.js`
+- `server/tests/mlRoutes.test.js`
+- `server/tests/providerState.test.js`
+- `FUNCTIONAL_BUG_FIX_REPORT.md`
 
-### 2b — Response format additions (this fix)
+## 8. Tests Added
 
-**`GET /api/ml/model`** — added `champion`, `challengers`, `status` fields:
-```json
-// No trained model:
-{ "ok": true, "metadata": null, "champion": null, "challengers": [], "status": "no_model" }
-// Model loaded:
-{ "ok": true, "metadata": {...}, "champion": {...}, "challengers": [], "status": "model_loaded" }
-```
+Backend tests added/updated:
 
-**`GET /api/ml/model-runs`** — added `runs` and `models` aliases:
-```json
-{ "ok": true, "activeJobs": [], "runs": [], "models": [], "count": 0 }
-```
+1. `GET /api/ml/drift` returns 200 with structured empty state.
+2. `GET /api/ml/model-runs` returns 200 with `runs: []`.
+3. `GET /api/ml/model` returns 200 with `champion: null` and `status: no_model`.
+4. `POST /api/ml/infer/:symbol` returns no champion model state when no champion exists.
+5. `POST /api/providers/active` with Yahoo only does not re-add `fallback_demo`.
+6. `POST /api/providers/active` with Yahoo + Alpha Vantage persists order when Alpha Vantage credentials are configured.
+7. `GET /api/feed/status` matches `/api/providers/health` active provider state.
+8. Empty provider selection returns structured `NO_PROVIDER_SELECTED` validation error.
+9. Stale `fallback_demo` enabled flags cannot override an explicit Yahoo-only saved selection.
+10. Yahoo delayed source reports `runtimeStatus: delayed` instead of a connection failure.
 
-**`GET /api/ml/model-card`** — added `modelCard` alias and `status` field:
-```json
-// No card: { "ok": true, "content": null, "modelCard": null, "status": "not_available" }
-// Has card: { "ok": true, "content": "...", "modelCard": "...", "status": "available" }
-```
+Frontend tests were not added because the `intraday-reversal-engine` frontend repository is not present in this workspace. The current checkout is the backend `reversal` repository only.
 
----
+## 9. Validation Results
 
-## 3. Provider Selection Fixes
+- `npm test` passed.
+- `npm run build` passed.
+- `npm run frontend:build` is not available in this backend package.
+- `npm run lint` is not available in this backend package.
+- `npm run typecheck` is not available in this backend package.
+- `npm run server:smoke` was started and exercised many routes successfully, but was stopped after repeated Yahoo Finance outbound fetch failures caused long retry/fallback delays in this environment.
 
-### Fix A — `resolveActiveState` validity check (`server/feeds/feedManager.js`)
+## 10. Remaining Risks
 
-**Before**: Used `this.getRuntimeState(id).valid` which internally checks `this.enabledByProvider[id]` (stale old state).
-
-**After**: Extracted `isTechValid(id)` helper that checks only `providerInitialized && usable && credentialLoaded` — deliberately skips the `enabled` field since `normalizedEnabled[id]` (the caller's intent) is already checked in the preceding filter step.
-
-```js
-const isTechValid = (id) => {
-  const rt = this.validateProviderRuntime(id);
-  return rt.providerInitialized && rt.usable && rt.credentialLoaded;
-};
-const validProviders = orderedRequested.filter((id) => normalizedEnabled[id]).filter((id) => isTechValid(id));
-const fallbackOrdered = available.filter((id) => normalizedEnabled[id] && isTechValid(id));
-```
-
-### Fix B — `setActiveProviders` enabledByProvider derivation (`server/feeds/feedManager.js`)
-
-**Before**: Merged incoming `enabledByProvider` with `this.enabledByProvider` — if caller sent `providers: ['yahoo']` without `enabledByProvider`, stale state persisted.
-
-**After**: When `providers` array is explicitly passed and non-empty, derive the enabled state for ALL registered providers from it first — providers absent from the array are set to `false`:
-
-```js
-if (Array.isArray(providers) && providers.length > 0) {
-  for (const id of providerRegistry.list().map((p) => p.id)) {
-    baseEnabled[id] = providers.includes(id);
-  }
-}
-const mergedEnabled = { ...baseEnabled, ...(enabledByProvider || {}) };
-```
-
-### Fix C — Empty selection validation (`server/api/feedRoutes.js`)
-
-`POST /api/feeds/providers/active` with `{ providers: [] }` now returns:
-```json
-HTTP 400
-{ "ok": false, "success": false, "error": { "code": "NO_PROVIDER_SELECTED", "message": "Select at least one provider." } }
-```
-
----
-
-## 4. fallback_demo Persistence Fix
-
-Covered by Fixes A and B above. The combination of:
-1. `isTechValid` not using stale `this.enabledByProvider`
-2. `setActiveProviders` deriving `baseEnabled` from the explicit `providers` array
-
-ensures that `POST /api/feeds/providers/active` with `{ providers: ['yahoo'] }` produces:
-- `enabledByProvider = { yahoo: true, fallback_demo: false, ... }`  
-- `resolveActiveState` includes yahoo (tech-valid) and excludes fallback_demo (disabled)
-- Result: `activeProviders = ['yahoo']` persisted to disk
-
-After server restart, `restoreActiveProviderState` loads the persisted state → same result.
-
----
-
-## 5. LiveData Status Consistency Fix
-
-### Fix D — Yahoo `runtimeStatus` normalization (`server/feeds/providers/yahooProvider.js`)
-
-Changed `status()` return from `{ status: 'fallback_delayed' }` to `{ status: 'delayed', sourceType: 'delayed_rest' }`.
-
-### Fix E — Canonical providers normalization (`server/api/marketStreamRoutes.js`)
-
-Added normalization in `canonicalProviders` construction:
-- `runtimeStatus = rawStatus === 'fallback_delayed' ? 'delayed' : rawStatus` — defensive for any residual values
-- Added `sourceType` field: `'delayed_rest'` | `'demo'` | `'realtime'` | `'market_data'`
-
-### Fix F — Feed status enrichment (`server/api/feedRoutes.js`)
-
-`GET /api/feeds/status` now returns enriched statuses with:
-- `sourceType` — `'delayed_rest'` for yahoo, `'demo'` for fallback_demo, etc.
-- `status` — normalized (`'fallback_delayed'` → `'delayed'`)
-
-Frontend consuming `feedStatus.statuses[].sourceType === 'delayed_rest'` can now show "DELAYED" instead of inferring broken from `connected: false`.
-
----
-
-## 6. Files Changed
-
-| File | Change |
-|------|--------|
-| `server/feeds/feedManager.js` | `resolveActiveState`: `isTechValid` helper; `setActiveProviders`: derive `baseEnabled` from providers array |
-| `server/feeds/providers/yahooProvider.js` | `status()` returns `status: 'delayed'`, `sourceType: 'delayed_rest'` |
-| `server/api/marketStreamRoutes.js` | `canonicalProviders`: normalize `runtimeStatus`, add `sourceType` |
-| `server/api/feedRoutes.js` | Status enrichment (`sourceType`, normalized status); empty-providers 400 validation |
-| `server/api/mlRoutes.js` | `/model`: add `champion`, `challengers`, `status`; `/model-runs`: add `runs`, `models` aliases; `/model-card`: add `modelCard`, `status` |
-| `scripts/server-smoke.cjs` | New checks: `_feedsEmptyProvidersCheck`, `_feedsYahooOnlyCheck`, extended `_mlWorkerModelCheck`, `_mlWorkerRunsCheck`, `_mlWorkerCardCheck`, `_providersHealthCheck` with `sourceType`/runtimeStatus assertions |
-
----
-
-## 7. Tests Added
-
-New smoke checks (in addition to those from PR #84):
-
-| Check | Assertion |
-|-------|-----------|
-| `POST /api/feeds/providers/active` with `{ providers: [] }` | HTTP 400 with `error.code: 'NO_PROVIDER_SELECTED'` |
-| `POST /api/feeds/providers/active` with `{ providers: ['yahoo'] }` | `activeProviders` includes `yahoo`, does NOT include `fallback_demo` |
-| `GET /api/providers/health` | `canonicalProviders[].sourceType` present; yahoo `runtimeStatus !== 'fallback_delayed'` |
-| `GET /api/ml/model` | `champion` field present, `challengers` is array, `status` present |
-| `GET /api/ml/model-runs` | `runs` alias present, `models` alias present |
-| `GET /api/ml/model-card` | `modelCard` field present, `status` present |
-
----
-
-## 8. Validation Results
-
-All 6 modified files pass `node --check` syntax validation.
-
-### Flows verified by smoke test assertions:
-
-**Flow A**: `POST /api/feeds/providers/active { providers: ['yahoo'] }` → `activeProviders = ['yahoo']`, fallback_demo absent ✓  
-**Flow C**: User unchecks fallback_demo (sends `{ providers: ['yahoo'] }`) → backend persists yahoo-only ✓  
-**Flow D**: `POST /api/feeds/providers/active { providers: [] }` → HTTP 400 with `NO_PROVIDER_SELECTED` ✓
-
----
-
-## 9. Remaining Risks / Frontend-Only Issues
-
-These cannot be fixed from the backend repo. They require changes to `bendehibahamcherif-oss/intraday-reversal-engine`:
-
-| Issue | File | Required Fix |
-|-------|------|-------------|
-| `parsedProviders` mixes activeProviders + selectedProviders + feedStatus.activeProviders | `src/workspaces/LiveDataWorkspace.jsx` | Use only `activeProviders` from backend; keep `selectedProviders` as draft-only |
-| `feedStore` re-hydrates from localStorage on refresh, overriding fresh backend state | `src/store/feedStore.js` | After `loadActiveProviders` returns backend state, write it back to `activeProviders`; never let stale persist middleware override a live response |
-| Yahoo `connected: false` may still display as "NOT CONNECTED" in some components | `src/components/MarketStreamStatus.jsx` | Check `sourceType === 'delayed_rest'` or `runtimeStatus === 'delayed'` → show "DELAYED" badge instead |
-| mlStore reads `data.models || []` for runs but backend returns `activeJobs` | `src/store/mlStore.js` | Now resolved by adding `models` alias on backend — frontend will get correct data |
-| `ProviderDiagnosticsPanel` `runtimeStatus` derivation doesn't handle `'delayed'` → display label | `src/components/ProviderDiagnosticsPanel.jsx` | Map `runtimeStatus === 'delayed'` → label `DELAYED` (green/blue badge, not error red) |
+- Frontend store behavior and component rendering could not be changed or tested because the frontend repository is not present in `/workspace`.
+- Yahoo Finance availability depends on outbound network access and can still be slow or unavailable in restricted environments; backend status now reports it as delayed REST data rather than a broken live connection when it delivers data.
+- Existing `/api/feed` and `/api/feeds` prefixes remain as compatible aliases to the same router to support both frontend call variants without incompatible route behavior.

@@ -80,24 +80,28 @@ class FeedManager {
       deduped.push(provider.id);
     }
 
+    const requestedSet = new Set(deduped);
     const normalizedEnabled = {};
     for (const providerId of available) {
-      const explicit = enabledByProvider && Object.prototype.hasOwnProperty.call(enabledByProvider, providerId) ? Boolean(enabledByProvider[providerId]) : deduped.includes(providerId);
-      normalizedEnabled[providerId] = explicit;
+      const explicitEnabled = enabledByProvider && Object.prototype.hasOwnProperty.call(enabledByProvider, providerId)
+        ? Boolean(enabledByProvider[providerId])
+        : requestedSet.has(providerId);
+      // An explicit provider list is the saved selection contract. Stale
+      // enabledByProvider values from older persisted payloads must not silently
+      // add or remove providers relative to providers[].
+      normalizedEnabled[providerId] = hasExplicitProviders ? requestedSet.has(providerId) : explicitEnabled;
     }
 
-    const preferredOrder = ['yahoo', 'twelvedata', DEFAULT_FALLBACK_PROVIDER];
-    const orderedRequested = [...preferredOrder, ...deduped.filter((id) => !preferredOrder.includes(id))];
     const isTechValid = (id) => {
       const rt = this.validateProviderRuntime(id);
       return rt.providerInitialized && rt.usable && rt.credentialLoaded;
     };
     const warnings = [];
-    const validProviders = orderedRequested.filter((id) => normalizedEnabled[id]).filter((id) => isTechValid(id));
-    const fallbackOrdered = available.filter((id) => normalizedEnabled[id] && isTechValid(id));
-    let finalProviders = validProviders.length ? validProviders : fallbackOrdered.length ? fallbackOrdered : [DEFAULT_FALLBACK_PROVIDER];
-    if (!validProviders.length && !fallbackOrdered.length) {
-      normalizedEnabled[DEFAULT_FALLBACK_PROVIDER] = true;
+    const validProviders = deduped.filter((id) => normalizedEnabled[id]).filter((id) => isTechValid(id));
+    let finalProviders = validProviders;
+    if (!finalProviders.length && allowEmergencyFallback) {
+      finalProviders = [DEFAULT_FALLBACK_PROVIDER];
+      for (const providerId of available) normalizedEnabled[providerId] = providerId === DEFAULT_FALLBACK_PROVIDER;
       warnings.push('No viable providers were available; fallback_demo was selected as an explicit emergency fallback.');
     }
 
@@ -125,7 +129,7 @@ class FeedManager {
       if (!deduped.includes(provider.id)) deduped.push(provider.id);
     }
     if (!deduped.length) {
-      return { ok: false, status: 400, error: { code: 'empty_provider_selection', message: 'Select at least one viable provider.' } };
+      return { ok: false, status: 400, error: { code: 'NO_PROVIDER_SELECTED', message: 'Select at least one provider.' } };
     }
     for (const providerId of deduped) {
       const provider = providerRegistry.get(providerId);
@@ -206,13 +210,13 @@ class FeedManager {
     this.statusBySource.set(provider, createFeedStatus({
       ...current,
       source: provider,
-      status: provider === DEFAULT_FALLBACK_PROVIDER ? 'idle_demo' : 'connected',
-      connected: provider === DEFAULT_FALLBACK_PROVIDER ? false : true,
+      status: provider === DEFAULT_FALLBACK_PROVIDER ? 'idle_demo' : provider === 'yahoo' ? 'delayed' : 'connected',
+      connected: provider === DEFAULT_FALLBACK_PROVIDER || provider === 'yahoo' ? false : true,
       symbols: Array.from(symbols),
       lastMessageAt: lastCandle?.t ?? lastCandle?.timestamp ?? new Date().toISOString(),
-      warnings: provider === DEFAULT_FALLBACK_PROVIDER ? ['Demo fallback source only. Not a live feed.'] : [],
+      warnings: provider === DEFAULT_FALLBACK_PROVIDER ? ['Demo fallback source only. Not live market data.'] : provider === 'yahoo' ? ['Yahoo is delayed data, not live institutional feed.'] : [],
     }));
-    console.info('[liveState]', JSON.stringify({ event: 'provider_promoted', source: provider, symbol: normalizedSymbol, connected: provider !== DEFAULT_FALLBACK_PROVIDER }));
+    console.info('[liveState]', JSON.stringify({ event: 'provider_promoted', source: provider, symbol: normalizedSymbol, connected: provider !== DEFAULT_FALLBACK_PROVIDER && provider !== 'yahoo' }));
   }
 
   _getProviderByAnyCase(id) {
@@ -235,8 +239,14 @@ class FeedManager {
     const meta = credentialStore.getMeta(p.id);
     const selected = Boolean(this.enabledByProvider[p.id]);
     const active = this.activeProviders.includes(p.id);
-    const warnings = Array.isArray(status.warnings) ? status.warnings.filter((warning) => !(meta.configured && String(warning).toLowerCase().includes('not configured'))) : [];
-    const provider = { id: p.id, name: p.name, label: p.name || p.id, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...meta, enabled: selected, selected, active, priority: active ? this.activeProviders.indexOf(p.id) : -1, runtime, status: status.status, connected: status.connected, warnings };
+    const rawWarnings = Array.isArray(status.warnings) ? status.warnings : [];
+    const warnings = active ? rawWarnings.filter((warning) => !(meta.configured && String(warning).toLowerCase().includes('not configured'))) : [];
+    const statusFromActivity = this.getFeedStatusBySource(p.id);
+    const deliveredData = Boolean(statusFromActivity?.lastMessageAt);
+    const isDelayedRest = p.type === 'fallback_delayed_unofficial';
+    const runtimeStatus = active && isDelayedRest && (status.status === 'delayed' || deliveredData) ? 'delayed' : status.status;
+    const connected = isDelayedRest ? false : Boolean(status.connected);
+    const provider = { id: p.id, name: p.name, label: p.name || p.id, type: p.type, requiresCredentials: p.requiresCredentials, supportsTicks: p.supportsTicks, supportsCandles: p.supportsCandles, supportsOrderBook: p.supportsOrderBook, ...meta, enabled: selected, selected, active, priority: active ? this.activeProviders.indexOf(p.id) : -1, runtime, status: runtimeStatus, connected, warnings };
     return { ...provider, ...this.normalizeProviderContract(provider, runtime), contract: this.normalizeProviderContract(provider, runtime) };
   }
 
@@ -312,12 +322,19 @@ class FeedManager {
   toCanonicalProvider(provider) {
     const credentialStatus = !provider.requiresCredentials ? 'not_required' : (provider.configured ? 'configured' : 'missing');
     let runtimeStatus = provider.status || 'unknown';
-    if (runtimeStatus === 'fallback_delayed') runtimeStatus = 'delayed';
+    if (runtimeStatus === 'fallback_delayed' || provider.type === 'fallback_delayed_unofficial') runtimeStatus = 'delayed';
     if (credentialStatus === 'configured' && (runtimeStatus === 'missing_credentials' || runtimeStatus.startsWith('configured'))) runtimeStatus = provider.connected ? 'connected' : 'delayed';
+    if (provider.id === DEFAULT_FALLBACK_PROVIDER) runtimeStatus = provider.active ? 'idle_demo' : 'idle_demo';
     const delayed = Boolean(provider.supportsCandles);
     const sourceType = provider.id === DEFAULT_FALLBACK_PROVIDER ? 'demo'
-      : provider.type === 'fallback_delayed_unofficial' ? 'delayed_rest'
+      : provider.type === 'fallback_delayed_unofficial' ? 'delayed'
       : Boolean(provider.connected) ? 'realtime' : 'market_data';
+    const canonicalWarnings = [];
+    if (provider.active && provider.type === 'fallback_delayed_unofficial') canonicalWarnings.push('Yahoo is delayed data, not live institutional feed.');
+    if (provider.active && provider.id === DEFAULT_FALLBACK_PROVIDER) canonicalWarnings.push('Demo fallback source only. Not live market data.');
+    for (const warning of Array.isArray(provider.warnings) ? provider.warnings : []) {
+      if (!canonicalWarnings.includes(warning)) canonicalWarnings.push(warning);
+    }
     return {
       id: provider.id,
       label: provider.name || provider.id,
@@ -331,7 +348,7 @@ class FeedManager {
       realtime: Boolean(provider.supportsTicks && provider.connected),
       delayed,
       priority: typeof provider.priority === 'number' ? provider.priority : -1,
-      warnings: Array.isArray(provider.warnings) ? provider.warnings : [],
+      warnings: canonicalWarnings,
       capabilities: { realtime: Boolean(provider.supportsTicks), delayed, candles: Boolean(provider.supportsCandles), ticks: Boolean(provider.supportsTicks), orderbook: Boolean(provider.supportsOrderBook) }
     };
   }
@@ -505,7 +522,7 @@ class FeedManager {
   generateDemoTick(symbol) { const normalized = String(symbol || 'SPY').toUpperCase(); const s = normalized; const seedBase = /^(EUR|GBP|AUD|NZD)/.test(s) || /=X$/.test(s) ? 1.1 : /JPY/.test(s) ? 150 : /BTC/.test(s) ? 60000 : /ETH/.test(s) ? 3000 : 500; const base = seedBase * (1 + (seededUnit(normalized.length * 97) - 0.5) * 0.02); const price = Number(base.toFixed(4)); const spread = price > 100 ? 0.01 : 0.0001; return this.ingestTick({ symbol: normalized, price, bid: Number((price - spread).toFixed(4)), ask: Number((price + spread).toFixed(4)), volume: 1000, source: 'fallback_demo', sequence: Date.now() % 1_000_000 }); }
   generateDemoCandle(symbol, timeframe = '1m') { const tick = this.generateDemoTick(symbol); const open = Number((tick.price * 0.999).toFixed(4)); const close = tick.price; return this.ingestCandle({ symbol: tick.symbol, timeframe, open, high: Math.max(open, close), low: Math.min(open, close), close, volume: 10_000, source: 'fallback_demo' }); }
   generateDemoOrderBook(symbol) { const normalized = String(symbol || 'SPY').toUpperCase(); const cached = this.latestTicks.get(normalized); const base = cached?.price || this.generateDemoTick(normalized).price; const spread = base > 100 ? 0.02 : 0.0002; const bids = [[Number((base - spread).toFixed(4)), 200], [Number((base - spread * 2).toFixed(4)), 350]]; const asks = [[Number((base + spread).toFixed(4)), 180], [Number((base + spread * 2).toFixed(4)), 300]]; return this.ingestOrderBook({ symbol: normalized, bids, asks, spread: Number((asks[0][0] - bids[0][0]).toFixed(4)), imbalance: 0.53, source: 'fallback_demo' }); }
-  bumpStatus(source, symbol, timestamp) { const current = this.getFeedStatusBySource(source); const symbols = new Set(current.symbols || []); if (symbol) symbols.add(symbol); const isDemo = source === 'fallback_demo'; this.statusBySource.set(source, createFeedStatus({ ...current, source, status: isDemo ? 'idle_demo' : (current.status || 'connected'), connected: isDemo ? false : Boolean(current.connected), symbols: Array.from(symbols), lastMessageAt: timestamp, warnings: isDemo ? ['Demo fallback source only. Not a live feed.'] : current.warnings })); }
+  bumpStatus(source, symbol, timestamp) { const current = this.getFeedStatusBySource(source); const symbols = new Set(current.symbols || []); if (symbol) symbols.add(symbol); const isDemo = source === 'fallback_demo'; const isYahoo = source === 'yahoo'; this.statusBySource.set(source, createFeedStatus({ ...current, source, status: isDemo ? 'idle_demo' : isYahoo ? 'delayed' : (current.status || 'connected'), connected: isDemo || isYahoo ? false : Boolean(current.connected), symbols: Array.from(symbols), lastMessageAt: timestamp, warnings: isDemo ? ['Demo fallback source only. Not live market data.'] : isYahoo ? ['Yahoo is delayed data, not live institutional feed.'] : current.warnings })); }
 }
 
 export const feedManager = new FeedManager();
