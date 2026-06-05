@@ -135,3 +135,43 @@ test('unknown provider is rejected', async () => {
   assert.equal(save.response.status, 400);
   assert.equal(save.body.error.code, 'unknown_provider');
 });
+
+
+test('empty provider selection is rejected with structured validation error', async () => {
+  const save = await request('/api/providers/active', { method: 'POST', body: JSON.stringify({ providers: [], providerOrder: [] }) });
+  assert.equal(save.response.status, 400);
+  assert.equal(save.body.success, false);
+  assert.equal(save.body.error.code, 'NO_PROVIDER_SELECTED');
+  assert.equal(save.body.error.message, 'Select at least one provider.');
+});
+
+test('stale fallback_demo enabled flag cannot override explicit yahoo saved selection', () => {
+  const resolved = feedManager.resolveActiveState({
+    providers: ['yahoo'],
+    enabledByProvider: { yahoo: true, fallback_demo: true },
+    symbols: [],
+  });
+  assert.deepEqual(resolved.providers, ['yahoo']);
+  assert.equal(resolved.enabledByProvider.yahoo, true);
+  assert.equal(resolved.enabledByProvider.fallback_demo, false);
+});
+
+test('yahoo delayed source reports delayed status instead of connection failure', async () => {
+  await request('/api/providers/active', { method: 'POST', body: JSON.stringify({ providers: ['yahoo'], providerOrder: ['yahoo'] }) });
+  feedManager.promoteProviderActivity({
+    source: 'yahoo',
+    symbol: 'SPY',
+    timeframe: '1m',
+    candles: [{ open: 500, high: 501, low: 499, close: 500.5, volume: 1000, timestamp: new Date().toISOString() }],
+  });
+  const health = await request('/api/providers/health');
+  const yahoo = health.body.providers.find((provider) => provider.id === 'yahoo');
+  const fallbackDemo = health.body.providers.find((provider) => provider.id === 'fallback_demo');
+  assert.equal(yahoo.active, true);
+  assert.equal(yahoo.connected, false);
+  assert.equal(yahoo.runtimeStatus, 'delayed');
+  assert.equal(yahoo.sourceType, 'delayed');
+  assert.equal(yahoo.warnings.includes('Yahoo is delayed data, not live institutional feed.'), true);
+  assert.equal(fallbackDemo.active, false);
+  assert.equal(fallbackDemo.warnings.includes('Demo fallback source only. Not live market data.'), false);
+});

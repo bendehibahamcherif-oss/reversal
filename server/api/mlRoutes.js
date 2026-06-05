@@ -138,10 +138,10 @@ mlRoutes.post('/infer/:symbol', async (req, res) => {
     meta = JSON.parse(raw);
   } catch (err) {
     if (err.code === 'ENOENT') {
-      return res.status(422).json({
-        ok:    false,
-        error: 'No champion model available — run training first',
-        code:  'NO_CHAMPION',
+      return res.status(200).json({
+        ok:      false,
+        status:  'no_champion_model',
+        message: 'No champion model available. Train and promote a model first.',
       });
     }
     log.error('model metadata read error', { symbol, error: err.message });
@@ -476,11 +476,11 @@ mlRoutes.get('/drift', (_req, res) => {
   return res.status(200).json({
     ok:     true,
     drift: {
-      psi:     {},
-      status:  'not_enough_data',
+      status: 'not_enough_data',
+      psi: {},
+      features: [],
+      lastComputedAt: null,
       message: 'Drift monitoring requires at least two inference windows. Run inference on more data.',
-      detectedAt: null,
-      features:   [],
     },
   });
 });
