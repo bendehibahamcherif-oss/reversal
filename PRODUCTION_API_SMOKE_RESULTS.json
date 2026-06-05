@@ -1,6 +1,6 @@
 {
   "apiBase": "https://reversal.onrender.com",
-  "generatedAt": "2026-06-05T06:37:36.019Z",
+  "generatedAt": "2026-06-05T15:53:47.167Z",
   "results": [
     {
       "endpoint": "/api/ml/health",
@@ -18,7 +18,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/ml/model-runs?symbol=SPY",
@@ -36,7 +36,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/ml/predictions?symbol=SPY",
@@ -54,7 +54,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/ml/drift",
@@ -63,7 +63,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/ml/model-card",
@@ -72,7 +72,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/ml/train",
@@ -90,7 +90,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/multi-asset/correlation?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
@@ -108,7 +108,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/multi-asset/volatility-heatmap?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
@@ -117,7 +117,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/macro/correlation?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
@@ -126,7 +126,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/macro/beta?asset=QQQ&benchmark=SPY&window=20",
@@ -144,7 +144,7 @@
       "contentType": null,
       "validJson": false,
       "shapeOk": false,
-      "error": "This operation was aborted"
+      "error": "fetch failed"
     },
     {
       "endpoint": "/api/macro/volatility-heatmap?symbols=SPY,QQQ,IWM,DIA,TLT,GLD&window=20&timeframe=1d",
