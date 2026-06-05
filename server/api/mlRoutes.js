@@ -15,16 +15,16 @@
  */
 
 import { Router }        from 'express';
-import { spawn }         from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { randomUUID }    from 'node:crypto';
 
 import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
                                                from './pythonInference.js';
 import { validateRequestBody, SchemaError }    from '../ml/mlInferSchema.js';
 import { logger as _log }                      from '../observability/logger.js';
+import { trainingService, EXPECTED_DATASET_PATHS } from '../ai/trainingService.js';
+import { modelRegistry } from '../ai/modelRegistry.js';
 
 const log = _log.child({ component: 'mlRoutes' });
 
@@ -35,8 +35,6 @@ const __dirname   = dirname(__filename);
 
 const MODELS_DIR     = resolve(__dirname, '..', 'ai', 'models');
 const MODEL_METADATA = resolve(MODELS_DIR, 'model_metadata.json');
-const TRAIN_SCRIPT   = resolve(__dirname, '..', 'ai', 'training', 'train_pipeline.py');
-const TRAIN_DATASET  = resolve(__dirname, '..', 'ai', 'datasets', 'snapshot.parquet');
 
 // ── In-memory training job registry ──────────────────────────────────────────
 
@@ -109,91 +107,61 @@ const mlRoutes = Router();
 
 mlRoutes.post('/infer/:symbol', async (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
+  const champion = modelRegistry.getChampion(symbol) || modelRegistry.getChampion();
 
-  // Check champion availability before validating feature payloads. The
-  // production UI may probe live inference on load; when no model exists, the
-  // route should render a no-champion empty state instead of a validation error.
-  let meta;
-  try {
-    const raw = await readFile(MODEL_METADATA, 'utf-8');
-    meta = JSON.parse(raw);
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return res.status(200).json({
-        ok:      false,
-        status:  'no_champion_model',
-        message: 'No champion model available. Train and promote a model first.',
-      });
-    }
-    log.error('model metadata read error', { symbol, error: err.message });
-    return res.status(500).json({ ok: false, error: 'Failed to read model metadata', code: 'MODEL_READ_ERROR' });
-  }
-
-  try {
-    validateRequestBody(req.body);
-  } catch (err) {
-    if (err instanceof SchemaError) {
-      return res.status(400).json({
-        ok:     false,
-        error:  err.message,
-        errors: err.errors,
-        code:   'INVALID_INPUT',
-      });
-    }
-    throw err;
-  }
-
-  const { features, timeframe } = req.body;
-
-  log.info('infer request', {
-    symbol,
-    timeframe:    timeframe || null,
-    featureCount: Object.keys(features).length,
-  });
-
-  const featureNames = Array.isArray(meta.feature_names) ? meta.feature_names : [];
-  const invLabelMap  = (meta.inv_label_map && typeof meta.inv_label_map === 'object')
-    ? meta.inv_label_map
-    : { '0': 'SHORT', '1': 'NEUTRAL', '2': 'LONG' };
-
-  try {
-    const result = await pythonInference.infer({ features, featureNames, invLabelMap });
-
-    return res.json({
-      ok:            true,
-      symbol,
-      timeframe:     timeframe || '1m',
-      prediction:    result.signal,   // signal → prediction for API compat
-      confidence:    result.confidence,
-      probabilities: result.probabilities,
-      modelId:       meta.best_model    || 'unknown',
-      modelType:     meta.best_model    || 'unknown',
-      championSince: meta.trained_at    || null,
-      latencyMs:     result.latencyMs,
-      inferredAt:    new Date().toISOString(),
+  if (!champion) {
+    return res.status(200).json({
+      ok:      false,
+      status:  'no_champion_model',
+      message: 'No champion model available. Train and promote a model first.',
     });
-  } catch (err) {
-    if (err instanceof InferenceTimeoutError) {
-      log.warn('inference timeout', { symbol, timeoutMs: err.timeoutMs });
-      return res.status(504).json({
-        ok:    false,
-        error: err.message,
-        code:  'TIMEOUT',
-        details: { timeoutMs: err.timeoutMs },
-      });
-    }
-    if (err instanceof InferenceWorkerError) {
-      const status = _workerErrorToStatus(err.code);
-      log.warn('inference worker error', { symbol, code: err.code, message: err.message });
-      return res.status(status).json({
-        ok:    false,
-        error: err.message,
-        code:  err.code,
-      });
-    }
-    log.error('unexpected inference error', { symbol, error: err.message });
-    return res.status(500).json({ ok: false, error: 'Internal inference error', code: 'INTERNAL_ERROR' });
   }
+
+  const featureVector = req.body?.featureVector || req.body?.features || null;
+  if (!featureVector || typeof featureVector !== 'object' || Array.isArray(featureVector)) {
+    return res.status(200).json({
+      ok:      false,
+      status:  'feature_vector_required',
+      message: 'Champion model exists, but live feature extraction is not wired yet. Provide featureVector.',
+      modelId: champion.modelId,
+    });
+  }
+
+  const manifestPath = resolve(champion.artifactPath || '', 'manifest.json');
+  let manifest = null;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
+  } catch {
+    return res.status(200).json({
+      ok: false,
+      status: 'model_artifact_unavailable',
+      message: 'Champion model manifest is missing. Retrain or promote a valid model.',
+      modelId: champion.modelId,
+    });
+  }
+
+  const required = Array.isArray(manifest.features) ? manifest.features : [];
+  const missing = required.filter((name) => !Number.isFinite(Number(featureVector[name])));
+  if (missing.length) {
+    return res.status(400).json({
+      ok: false,
+      status: 'invalid_feature_vector',
+      message: 'featureVector is missing required model features.',
+      missingFeatures: missing,
+      modelId: champion.modelId,
+    });
+  }
+
+  // Loading and executing arbitrary local model artifacts is intentionally left
+  // to the trusted Python inference worker. The first trainable path registers
+  // the champion and validates schemas; live feature extraction/worker wiring is
+  // reported explicitly instead of crashing or fabricating predictions.
+  return res.status(200).json({
+    ok: false,
+    status: 'inference_worker_not_wired',
+    message: 'Champion model and featureVector are valid, but the artifact inference worker is not wired yet.',
+    modelId: champion.modelId,
+  });
 });
 
 // ── GET /api/ml/health ────────────────────────────────────────────────────────
@@ -239,34 +207,15 @@ mlRoutes.get('/health', async (_req, res) => {
 // Returns model_metadata.json for the champion model, or null if not trained.
 
 mlRoutes.get('/model', async (_req, res) => {
-  try {
-    const raw      = await readFile(MODEL_METADATA, 'utf-8');
-    const metadata = JSON.parse(raw);
-    return res.status(200).json({
-      ok:          true,
-      metadata,
-      champion:    metadata,   // alias — some frontend variants read data.champion
-      challengers: [],
-      status:      'model_loaded',
-    });
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      return res.status(200).json({
-        ok:          true,
-        metadata:    null,
-        champion:    null,
-        challengers: [],
-        status:      'no_model',
-        message:     'No champion model trained yet',
-      });
-    }
-    log.error('model metadata read error', { error: err.message });
-    return res.status(500).json({
-      ok:    false,
-      error: 'Failed to read model metadata',
-      code:  'MODEL_READ_ERROR',
-    });
-  }
+  const champion = modelRegistry.getChampion();
+  return res.status(200).json({
+    ok: true,
+    metadata: champion,
+    champion,
+    challengers: [],
+    status: champion ? 'model_loaded' : 'no_model',
+    message: champion ? undefined : 'No champion model trained yet',
+  });
 });
 
 // ── POST /api/ml/train ────────────────────────────────────────────────────────
@@ -274,95 +223,18 @@ mlRoutes.get('/model', async (_req, res) => {
 // Spawn a background Python training run. Returns immediately with a jobId.
 
 mlRoutes.post('/train', async (req, res) => {
-  const { valid, errors } = _validateTrainBody(req.body);
-  if (!valid) {
-    return res.status(400).json({ ok: false, error: errors.join('; '), code: 'INVALID_INPUT', errors });
-  }
-
-  const symbol    = String(req.body.symbol).toUpperCase().trim();
-  const horizon   = req.body.horizon  !== undefined ? Number(req.body.horizon)  : 20;
-  const tauUp     = req.body.tauUp    !== undefined ? Number(req.body.tauUp)    : 0.005;
-  const tauDown   = req.body.tauDown  !== undefined ? Number(req.body.tauDown)  : -0.005;
-  const jobId     = randomUUID();
-  const startedAt = new Date().toISOString();
-
-  if (req.body.dryRun === true) {
-    return res.status(200).json({
-      ok:      false,
-      status:  'training_unavailable',
-      message: 'Training worker or dataset is not available.',
-      details: { worker: 'not_started_dry_run', dataset: 'not_checked' },
-      symbol,
-    });
-  }
-
   try {
-    await access(TRAIN_SCRIPT);
-    await access(TRAIN_DATASET);
+    const result = await trainingService.train(req.body || {});
+    return res.status(200).json(result);
   } catch (err) {
-    const missingDataset = err?.path === TRAIN_DATASET || err?.code === 'ENOENT';
-    return res.status(200).json({
-      ok:      false,
-      status:  'training_unavailable',
-      message: 'Training worker or dataset is not available.',
-      details: {
-        worker: missingDataset ? 'stopped' : 'missing_or_unavailable',
-        dataset: missingDataset ? 'missing_or_empty' : 'not_checked',
-      },
-      symbol,
-    });
-  }
-
-  const args = [
-    TRAIN_SCRIPT,
-    '--data',           TRAIN_DATASET,
-    '--symbol',         symbol,
-    '--horizon',        String(horizon),
-    '--up-threshold',   String(tauUp),
-    '--down-threshold', String(tauDown),
-    '--output',         MODELS_DIR,
-  ];
-
-  let proc;
-  try {
-    proc = spawn('python3', args, {
-      stdio:    ['ignore', 'pipe', 'pipe'],
-      env:      { ...process.env, ML_MODELS_DIR: MODELS_DIR },
-      detached: false,
-    });
-  } catch (spawnErr) {
-    log.error('train spawn failed', { symbol, error: spawnErr.message });
+    log.error('train endpoint error', { error: err.message });
     return res.status(500).json({
-      ok:    false,
-      error: `Failed to start training process: ${spawnErr.message}`,
-      code:  'SPAWN_ERROR',
+      ok: false,
+      status: 'training_failed',
+      message: 'Training failed before the worker returned a result.',
+      details: { error: err.message },
     });
   }
-
-  _trainingJobs.set(jobId, { jobId, symbol, startedAt, pid: proc.pid });
-
-  proc.stdout.on('data', (chunk) => {
-    for (const line of chunk.toString().split('\n')) {
-      if (line.trim()) log.info(`[train:${jobId}:${symbol}] ${line}`);
-    }
-  });
-  proc.stderr.on('data', (chunk) => {
-    for (const line of chunk.toString().split('\n')) {
-      if (line.trim()) log.warn(`[train:${jobId}:${symbol}] ${line}`);
-    }
-  });
-  proc.on('exit', (code, signal) => {
-    log.info('train job finished', { jobId, symbol, code, signal });
-    _trainingJobs.delete(jobId);
-  });
-  proc.on('error', (err) => {
-    log.error('train job error', { jobId, symbol, error: err.message });
-    _trainingJobs.delete(jobId);
-  });
-
-  log.info('train started', { jobId, symbol, pid: proc.pid, horizon });
-
-  return res.status(200).json({ ok: true, jobId, symbol, message: 'Training started', startedAt });
 });
 
 // ── GET /api/ml/predictions ───────────────────────────────────────────────────
@@ -381,20 +253,30 @@ mlRoutes.get('/predictions', (req, res) => {
 // Lists active (in-flight) training jobs.
 
 function _trainingRunsHandler(req, res) {
-  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase().trim() : 'SPY';
-  const jobs = Array.from(_trainingJobs.values()).map((j) => ({
-    jobId:     j.jobId,
-    symbol:    j.symbol,
-    startedAt: j.startedAt,
-    pid:       j.pid ?? null,
-    status:    'running',
-  }));
-  // activeJobs is the canonical field; runs/models are aliases for frontend compat
-  return res.status(200).json({ ok: true, activeJobs: jobs, runs: jobs, models: jobs, symbol, status: jobs.length ? 'running' : 'empty', count: jobs.length });
+  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase().trim() : undefined;
+  const models = modelRegistry.list();
+  return res.status(200).json({
+    ok: true,
+    activeJobs: [],
+    runs: models,
+    models,
+    status: models.length ? 'available' : 'empty',
+    count: models.length,
+    ...(symbol ? { symbol } : {}),
+  });
 }
 
 mlRoutes.get('/training-runs', _trainingRunsHandler);
 mlRoutes.get('/model-runs',    _trainingRunsHandler);
+
+mlRoutes.post('/promote/:modelId', (req, res) => {
+  const result = modelRegistry.promote(String(req.params.modelId || ''));
+  return res.status(result.ok ? 200 : 404).json(result);
+});
+
+mlRoutes.get('/dataset/expected-paths', (_req, res) => {
+  return res.status(200).json({ ok: true, expectedPaths: EXPECTED_DATASET_PATHS });
+});
 
 // ── GET /api/ml/model-card ────────────────────────────────────────────────────
 
