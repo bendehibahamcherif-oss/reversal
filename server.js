@@ -4,6 +4,7 @@ import http from 'http';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { Server } from 'socket.io';
+import { sanitizeJson } from './server/utils/apiResponse.js';
 
 import {
   alertsDB,
@@ -249,13 +250,13 @@ app.get('/api/version', (req, res) => {
 });
 
 app.use('/api', (req, res) => {
-  res.status(404).json({
+  res.status(404).json(sanitizeJson({
     ok: false,
     status: 'endpoint_not_found',
-    error: 'API endpoint not found',
     message: 'API endpoint not found.',
     endpoint: req.originalUrl || req.path,
-  });
+    method: req.method,
+  }));
 });
 
 // Global JSON error handler — guarantees /api/* never falls through to Express's
@@ -267,17 +268,17 @@ app.use((err, req, res, next) => {
   const requestId = req.traceId || req.headers?.['x-request-id'] || `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   if (res.headersSent) return;
   if (isApi) {
-    return res.status(statusCode).json({
+    return res.status(statusCode).json(sanitizeJson({
       ok: false,
       status: err?.code || 'internal_error',
       message: err?.message || 'Internal server error',
-      details: {},
+      details: err ? { error: err } : {},
       endpoint: req.originalUrl || req.path,
       method: req.method,
       requestId,
-    });
+    }));
   }
-  return res.status(statusCode).json({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error', requestId });
+  return res.status(statusCode).json(sanitizeJson({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error', requestId }));
 });
 
 await connectDatabase();

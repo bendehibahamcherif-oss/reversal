@@ -92,9 +92,19 @@ class BacktestStore {
   }
 
   getRuns(symbol, limit = 50) {
+    if (symbol == null || String(symbol).trim() === '') {
+      return this.getAllRuns(limit);
+    }
     return getDb()
       .prepare('SELECT * FROM backtest_runs WHERE symbol=? ORDER BY created_at DESC LIMIT ?')
       .all(String(symbol).toUpperCase(), limit)
+      .map(_deserializeRun);
+  }
+
+  getAllRuns(limit = 50) {
+    return getDb()
+      .prepare('SELECT * FROM backtest_runs ORDER BY created_at DESC LIMIT ?')
+      .all(limit)
       .map(_deserializeRun);
   }
 
