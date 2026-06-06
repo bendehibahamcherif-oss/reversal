@@ -264,6 +264,7 @@ app.use('/api', (req, res) => {
 app.use((err, req, res, next) => {
   const isApi = (req.originalUrl || req.path || '').startsWith('/api');
   const statusCode = Number(err?.statusCode || err?.status) || 500;
+  const requestId = req.traceId || req.headers?.['x-request-id'] || `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   if (res.headersSent) return;
   if (isApi) {
     return res.status(statusCode).json({
@@ -273,9 +274,10 @@ app.use((err, req, res, next) => {
       details: {},
       endpoint: req.originalUrl || req.path,
       method: req.method,
+      requestId,
     });
   }
-  return res.status(statusCode).json({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error' });
+  return res.status(statusCode).json({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error', requestId });
 });
 
 await connectDatabase();

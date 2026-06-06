@@ -84,6 +84,60 @@ historicalRoutes.get('/datasets/:id/diagnostics', (req, res) => {
   return sendJson(res, 200, diag);
 });
 
+// ── Dataset selection endpoints ───────────────────────────────────────────────
+// POST /api/historical/use-for-ml | use-for-backtest | use-for-correlation
+//
+// Validate that a dataset is usable for the given target before the frontend
+// commits to it. Never returns success with an undefined datasetId.
+//
+// Error priority: dataset_required → dataset_not_found → dataset_file_missing →
+// dataset_file_empty → (ml only) dataset_csv_missing.
+function useDatasetForTarget(target, req, res) {
+  const datasetId = req.body?.datasetId == null ? '' : String(req.body.datasetId).trim();
+  if (!datasetId) {
+    return sendJson(res, 400, { ok: false, status: 'dataset_required', message: 'datasetId is required.', target });
+  }
+
+  const diag = diagnoseDataset(datasetId);
+  if (!diag.registryFound) {
+    return sendJson(res, 404, { ok: false, status: 'dataset_not_found', message: 'Historical dataset not found.', datasetId, target });
+  }
+
+  const hasAnyFile = diag.fileExists || diag.csvFileExists;
+  if (!hasAnyFile) {
+    return sendJson(res, 404, { ok: false, status: 'dataset_file_missing', message: 'Historical dataset exists in the registry but no backing file is present on this server. Re-download it.', datasetId, target });
+  }
+
+  // A file is referenced but is zero bytes.
+  const jsonEmpty = diag.fileExists && diag.fileSizeBytes === 0;
+  const csvEmpty  = diag.csvFileExists && diag.csvSizeBytes === 0;
+  if ((jsonEmpty && !diag.csvFileExists) || (csvEmpty && !diag.fileExists) || (jsonEmpty && csvEmpty)) {
+    return sendJson(res, 422, { ok: false, status: 'dataset_file_empty', message: 'Dataset file exists but is empty. Re-download it.', datasetId, target });
+  }
+
+  // ML training requires a CSV (train_pipeline.py cannot read JSON).
+  if (target === 'ml' && !diag.usableForMl) {
+    if (diag.fileExists && !diag.csvFileExists) {
+      return sendJson(res, 422, { ok: false, status: 'dataset_csv_missing', message: 'Dataset JSON exists but the training-ready CSV was not generated. Re-download the dataset.', datasetId, target });
+    }
+    return sendJson(res, 422, { ok: false, status: 'dataset_file_empty', message: 'Dataset CSV is present but not usable for ML training.', datasetId, target });
+  }
+
+  return sendJson(res, 200, {
+    ok: true,
+    status: 'ready',
+    datasetId,
+    target,
+    dataset: diag.dataset,
+    usableForMl: diag.usableForMl,
+    files: { csv: diag.csvFileExists, json: diag.fileExists },
+  });
+}
+
+historicalRoutes.post('/use-for-ml',          (req, res) => useDatasetForTarget('ml', req, res));
+historicalRoutes.post('/use-for-backtest',    (req, res) => useDatasetForTarget('backtest', req, res));
+historicalRoutes.post('/use-for-correlation', (req, res) => useDatasetForTarget('correlation', req, res));
+
 // GET /api/historical/datasets/:id/candles
 historicalRoutes.get('/datasets/:id/candles', async (req, res) => {
   const result = await readDatasetCandlesAsync(req.params.id);

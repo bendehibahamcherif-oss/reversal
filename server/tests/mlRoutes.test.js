@@ -209,6 +209,21 @@ test('POST /api/ml/train with small synthetic CSV respects dependency preflight 
   }
 });
 
+test('GET /api/ml/dependencies reports required/optional split and never python_dependency_missing when required present', async () => {
+  const { response, body } = await request('/api/ml/dependencies');
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.dependencies, 'object');
+  assert.ok(Array.isArray(body.requiredMissing), 'requiredMissing must be an array');
+  assert.ok(Array.isArray(body.optionalMissing), 'optionalMissing must be an array');
+  assert.ok(['ready', 'ready_with_optional_missing', 'python_dependency_missing', 'python_unavailable'].includes(body.status), `unexpected status ${body.status}`);
+  // Contract: ok===true iff no REQUIRED dep is missing. A missing optional dep
+  // (e.g. xgboost) must NOT flip the run to python_dependency_missing.
+  if (body.requiredMissing.length === 0) {
+    assert.equal(body.ok, true);
+    assert.notEqual(body.status, 'python_dependency_missing');
+  }
+});
+
 test('POST /api/ml/infer/:symbol returns no champion before validating empty payload', async () => {
   const { response, body } = await request('/api/ml/infer/SPY', {
     method: 'POST',

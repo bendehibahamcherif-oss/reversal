@@ -1,0 +1,219 @@
+{
+  "ok": true,
+  "baseUrl": "http://127.0.0.1:18095",
+  "generatedAt": "2026-06-06T18:11:55.406Z",
+  "summary": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0
+  },
+  "results": [
+    {
+      "method": "GET",
+      "path": "/api/version",
+      "keys": [
+        "ok",
+        "version"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 7,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/dependencies",
+      "keys": [
+        "ok",
+        "status",
+        "dependencies"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 40,
+      "missingKeys": [],
+      "bodyStatus": "ready"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/model",
+      "keys": [
+        "ok",
+        "champion",
+        "status"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 3,
+      "missingKeys": [],
+      "bodyStatus": "no_model"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/model-runs",
+      "keys": [
+        "ok",
+        "runs"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 3,
+      "missingKeys": [],
+      "bodyStatus": "empty"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ml/drift",
+      "keys": [
+        "ok",
+        "drift"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 4,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/historical/providers",
+      "keys": [
+        "ok",
+        "providers"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 2,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/historical/datasets",
+      "keys": [
+        "ok",
+        "datasets"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 3,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/health",
+      "keys": [
+        "providers"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 5,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/active",
+      "keys": [
+        "activeProviders"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 3,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/feed/status",
+      "keys": [
+        "providers"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 2,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio/summary",
+      "keys": [
+        "ok"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 2,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk/summary",
+      "keys": [
+        "ok"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 3,
+      "missingKeys": [],
+      "bodyStatus": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/macro/correlation?symbols=SPY,QQQ&window=20&timeframe=1d",
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 2,
+      "missingKeys": [],
+      "bodyStatus": "not_enough_data"
+    },
+    {
+      "method": "GET",
+      "path": "/api/macro/beta?asset=QQQ&benchmark=SPY&window=20",
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "status": 200,
+      "ok": true,
+      "durationMs": 2,
+      "missingKeys": [],
+      "bodyStatus": "not_enough_data"
+    },
+    {
+      "method": "GET",
+      "path": "/api/__unknown__",
+      "expect404Json": true,
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "status": 404,
+      "ok": true,
+      "durationMs": 2,
+      "bodyStatus": "endpoint_not_found"
+    },
+    {
+      "method": "POST",
+      "path": "/api/historical/use-for-ml",
+      "body": {},
+      "expectStatus": 400,
+      "keys": [
+        "ok",
+        "status"
+      ],
+      "status": 400,
+      "ok": true,
+      "durationMs": 10,
+      "missingKeys": [],
+      "bodyStatus": "dataset_required"
+    }
+  ]
+}

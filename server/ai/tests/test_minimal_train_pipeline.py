@@ -205,19 +205,27 @@ def test_small_dataset_returns_structured_not_enough_data(tmp_path):
 def test_one_class_labels_return_not_enough_data(tmp_path):
     _require_ml_deps()
     dataset = tmp_path / "one_class.csv"
-    price = 100.0
+    # Real price/volume variation so features are computable (non-NaN) and enough
+    # usable rows survive cleaning to pass the min-rows gate; but tau is set so high
+    # that EVERY label is NEUTRAL — exercising the one-class branch (not zero-rows).
     with dataset.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["timestamp", "symbol", "open", "high", "low", "close", "volume"])
-        for i in range(140):
+        for i in range(200):
+            open_ = 100.0 + (i % 10) - 5      # oscillates 95..104
+            close = 100.0 + ((i + 3) % 10) - 5
+            high = max(open_, close) + 0.5
+            low = min(open_, close) - 0.5
+            volume = 1000 + (i % 7) * 20
+            hh, mm = divmod(i, 60)
             writer.writerow([
-                f"2026-01-01T00:{i % 60:02d}:00Z",
+                f"2026-01-01T{hh:02d}:{mm:02d}:00Z",
                 "SPY",
-                f"{price:.6f}",
-                f"{price + 0.1:.6f}",
-                f"{price - 0.1:.6f}",
-                f"{price:.6f}",
-                1000,
+                f"{open_:.6f}",
+                f"{high:.6f}",
+                f"{low:.6f}",
+                f"{close:.6f}",
+                volume,
             ])
 
     args = _args(dataset, tmp_path / "artifacts", "LogisticRegression")
