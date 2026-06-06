@@ -151,6 +151,10 @@ test('POST /api/ml/train with unknown datasetId returns dataset_not_found (not d
 
 test('POST /api/ml/train with registered dataset but csv missing returns dataset_csv_missing', async () => {
   const { historicalDatasetRegistry } = await import('../historical/historicalDatasetRegistry.js');
+  const { DATA_DIR } = historicalDatasetRegistry.getDirectories();
+  const registryFile = path.join(DATA_DIR, 'datasets.json');
+  const registrySnapshot = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, 'utf-8') : null;
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ml-csv-miss-'));
   const jsonPath = path.join(tmpDir, 'SPY_1d_yahoo_test.json');
   fs.writeFileSync(jsonPath, JSON.stringify([{ timestamp: '2026-01-01T00:00:00Z', symbol: 'SPY', open: 500, high: 502, low: 499, close: 501, volume: 1000000 }]));
@@ -160,18 +164,24 @@ test('POST /api/ml/train with registered dataset but csv missing returns dataset
     startDate: '2026-01-01', endDate: '2026-01-01', candleCount: 1,
     filePath: jsonPath,
     fileSize: fs.statSync(jsonPath).size,
-    csvPath: null,  // No CSV
+    csvPath: null,
     purpose: 'ml',
   });
 
-  const { response, body } = await request('/api/ml/train', {
-    method: 'POST',
-    body: JSON.stringify({ symbol: 'SPY', timeframe: '1d', horizon: 20, datasetId: record.id }),
-  });
-  assert.equal(response.status, 422);
-  assert.equal(body.ok, false);
-  assert.equal(body.status, 'dataset_csv_missing');
-  assert.equal(body.datasetId, record.id);
+  try {
+    const { response, body } = await request('/api/ml/train', {
+      method: 'POST',
+      body: JSON.stringify({ symbol: 'SPY', timeframe: '1d', horizon: 20, datasetId: record.id }),
+    });
+    assert.equal(response.status, 422);
+    assert.equal(body.ok, false);
+    assert.equal(body.status, 'dataset_csv_missing');
+    assert.equal(body.datasetId, record.id);
+  } finally {
+    if (registrySnapshot === null) fs.rmSync(registryFile, { force: true });
+    else fs.writeFileSync(registryFile, registrySnapshot);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 
@@ -227,4 +237,38 @@ test('POST /api/ml/promote/:modelId sets champion and GET /api/ml/model returns 
   assert.equal(response.status, 200);
   assert.equal(body.ok, true);
   assert.equal(body.champion.modelId, 'test-promote-model');
+});
+
+test('GET /api/ml/dependencies returns JSON with dependencies map', async () => {
+  const { response, body } = await request('/api/ml/dependencies');
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.ok, 'boolean');
+  assert.ok(body.python, 'Should have python field');
+  assert.equal(typeof body.python.available, 'boolean');
+  assert.ok(body.dependencies, 'Should have dependencies map');
+  assert.equal(typeof body.dependencies.pandas, 'boolean');
+  assert.equal(typeof body.dependencies.numpy, 'boolean');
+  assert.equal(typeof body.dependencies.sklearn, 'boolean');
+  assert.ok(['ready', 'python_dependency_missing', 'python_unavailable'].includes(body.status), `Unexpected status: ${body.status}`);
+});
+
+test('GET /api/ml/dependencies returns pythonBin field', async () => {
+  const { response, body } = await request('/api/ml/dependencies');
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.pythonBin, 'string');
+  assert.ok(body.pythonBin.length > 0);
+});
+
+test('POST /api/ml/train with ML_PYTHON_BIN env override uses that binary', async () => {
+  const orig = process.env.ML_PYTHON_BIN;
+  process.env.ML_PYTHON_BIN = 'python3';
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 20 }),
+  });
+  process.env.ML_PYTHON_BIN = orig;
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  // Should get dataset_missing or not_enough_data — not a spawn error
+  assert.notEqual(body.status, 'python_unavailable');
 });
