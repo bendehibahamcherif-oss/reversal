@@ -186,7 +186,7 @@ test('POST /api/ml/train with registered dataset but csv missing returns dataset
 
 
 
-test('POST /api/ml/train with small synthetic CSV returns JSON not_enough_data', async () => {
+test('POST /api/ml/train with small synthetic CSV respects dependency preflight before pipeline result', async () => {
   const datasetPath = path.join(process.env.ML_ARTIFACTS_DIR, 'tiny_features_snapshot.csv');
   fs.writeFileSync(datasetPath, [
     'timestamp,symbol,open,high,low,close,volume',
@@ -194,13 +194,19 @@ test('POST /api/ml/train with small synthetic CSV returns JSON not_enough_data',
     '2026-01-01T14:31:00Z,SPY,100.5,101.5,100,101,1200',
     '2026-01-01T14:32:00Z,SPY,101,102,100.5,101.5,1100',
   ].join('\n'));
+  const deps = await request('/api/ml/dependencies');
   const { response, body } = await request('/api/ml/train', {
     method: 'POST',
     body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 2, datasetPath }),
   });
   assert.equal(response.status, 200);
   assert.equal(body.ok, false);
-  assert.equal(body.status, 'not_enough_data');
+  if (deps.body.status === 'ready') {
+    assert.equal(body.status, 'not_enough_data');
+  } else {
+    assert.equal(body.status, 'python_dependency_missing');
+    assert.ok(body.missing.length > 0);
+  }
 });
 
 test('POST /api/ml/infer/:symbol returns no champion before validating empty payload', async () => {
@@ -271,4 +277,68 @@ test('POST /api/ml/train with ML_PYTHON_BIN env override uses that binary', asyn
   assert.equal(body.ok, false);
   // Should get dataset_missing or not_enough_data — not a spawn error
   assert.notEqual(body.status, 'python_unavailable');
+});
+
+test('TrainingService ready dependency checker does not return python_dependency_missing', async () => {
+  const { TrainingService } = await import('../ai/trainingService.js');
+  const datasetPath = path.join(process.env.ML_ARTIFACTS_DIR, 'ready_dependency_probe.csv');
+  fs.writeFileSync(datasetPath, [
+    'timestamp,symbol,open,high,low,close,volume',
+    '2026-01-01T14:30:00Z,SPY,100,101,99,100.5,1000',
+    '2026-01-01T14:31:00Z,SPY,100.5,101.5,100,101,1200',
+  ].join('\n'));
+  const service = new TrainingService({
+    dependencyChecker: async ({ pythonBin }) => ({ ok: true, status: 'ready', python: { available: true, version: 'test' }, dependencies: {}, missing: [], pythonBin }),
+    spawnTraining: async () => ({ ok: false, status: 'not_enough_data', message: 'test not enough data' }),
+  });
+
+  const result = await service.train({ symbol: 'SPY', timeframe: '1m', horizon: 1, datasetPath });
+  assert.equal(result.ok, false);
+  assert.notEqual(result.status, 'python_dependency_missing');
+  assert.equal(result.status, 'not_enough_data');
+  assert.equal(result.python.dependencyStatus, 'ready');
+  assert.deepEqual(result.python.missing, []);
+});
+
+test('TrainingService missing pandas dependency returns python_dependency_missing with missing pandas', async () => {
+  const { TrainingService } = await import('../ai/trainingService.js');
+  const datasetPath = path.join(process.env.ML_ARTIFACTS_DIR, 'missing_pandas_probe.csv');
+  fs.writeFileSync(datasetPath, [
+    'timestamp,symbol,open,high,low,close,volume',
+    '2026-01-01T14:30:00Z,SPY,100,101,99,100.5,1000',
+  ].join('\n'));
+  const service = new TrainingService({
+    dependencyChecker: async ({ pythonBin }) => ({ ok: false, status: 'python_dependency_missing', python: { available: true, version: 'test' }, dependencies: { pandas: false }, missing: ['pandas'], pythonBin }),
+    spawnTraining: async () => ({ ok: false, status: 'should_not_spawn' }),
+  });
+
+  const result = await service.train({ symbol: 'SPY', timeframe: '1m', horizon: 1, datasetPath });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'python_dependency_missing');
+  assert.deepEqual(result.missing, ['pandas']);
+  assert.equal(result.python.dependencyStatus, 'python_dependency_missing');
+  assert.deepEqual(result.python.missing, ['pandas']);
+});
+
+test('POST /api/ml/train failure includes dependency diagnostics after dependency preflight', async () => {
+  const datasetPath = path.join(process.env.ML_ARTIFACTS_DIR, 'diagnostic_failure.csv');
+  fs.writeFileSync(datasetPath, [
+    'timestamp,symbol,open,high,low,close,volume',
+    '2026-01-01T14:30:00Z,SPY,100,101,99,100.5,1000',
+    '2026-01-01T14:31:00Z,SPY,100.5,101.5,100,101,1200',
+  ].join('\n'));
+
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 1, datasetPath }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  assert.ok(body.python, 'failure response should include python diagnostics');
+  assert.equal(typeof body.python.bin, 'string');
+  assert.ok(['ready', 'python_dependency_missing', 'python_unavailable'].includes(body.python.dependencyStatus));
+  assert.ok(Array.isArray(body.python.missing));
+  if (body.status === 'python_dependency_missing') {
+    assert.ok(body.missing.length > 0, 'python_dependency_missing must not have an empty missing list');
+  }
 });

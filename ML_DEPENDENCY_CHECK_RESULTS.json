@@ -1,0 +1,24 @@
+{
+  "ok": false,
+  "status": "python_dependency_missing",
+  "python": {
+    "available": true,
+    "version": "3.12.13"
+  },
+  "dependencies": {
+    "numpy": false,
+    "pandas": false,
+    "sklearn": false,
+    "joblib": false,
+    "pyarrow": false,
+    "xgboost": false
+  },
+  "missing": [
+    "numpy",
+    "pandas",
+    "sklearn",
+    "joblib"
+  ],
+  "installCommand": "pip install -r requirements-ml.txt",
+  "pythonBin": "python3"
+}
