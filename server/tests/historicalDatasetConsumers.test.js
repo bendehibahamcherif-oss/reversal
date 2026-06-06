@@ -73,7 +73,7 @@ test.after(async () => {
 
 test('ML train with missing datasetId returns dataset_not_found', async () => {
   const { response, body } = await request('/api/ml/train', { method: 'POST', body: JSON.stringify({ symbol: 'SPY', timeframe: '1d', horizon: 10, datasetId: 'missing_ds' }) });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 404);
   assert.equal(body.status, 'dataset_not_found');
   assert.equal(body.datasetId, 'missing_ds');
 });

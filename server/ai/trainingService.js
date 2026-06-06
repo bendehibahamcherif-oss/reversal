@@ -12,7 +12,24 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TRAIN_SCRIPT = path.join(__dirname, 'train_pipeline.py');
 const DEFAULT_TIMEOUT_MS = Number(process.env.ML_TRAIN_TIMEOUT_MS || 10 * 60 * 1000);
-const PYTHON_BIN = process.env.ML_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
+
+export function getPythonBin() {
+  return process.env.ML_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
+}
+
+// Backward-compatible named export. Runtime probes and spawns call getPythonBin()
+// so /api/ml/dependencies and /api/ml/train always use the same binary.
+const PYTHON_BIN = getPythonBin();
+
+const DEPENDENCY_MODULES = {
+  numpy: 'numpy',
+  pandas: 'pandas',
+  sklearn: 'sklearn',
+  joblib: 'joblib',
+  pyarrow: 'pyarrow',
+  xgboost: 'xgboost',
+};
+const REQUIRED_DEPENDENCIES = ['numpy', 'pandas', 'sklearn', 'joblib'];
 
 export const EXPECTED_DATASET_PATHS = [
   path.join(__dirname, 'data', 'features_snapshot.parquet'),
@@ -71,32 +88,132 @@ function hashFile(filePath) {
   return `sha256:${hash.digest('hex')}`;
 }
 
-async function checkPythonDeps() {
+function dependencyProbeScript() {
+  return `
+import sys, json, importlib.util as iu
+pkgs = ${JSON.stringify(DEPENDENCY_MODULES)}
+core = ${JSON.stringify(REQUIRED_DEPENDENCIES)}
+deps = {label: iu.find_spec(mod) is not None for label, mod in pkgs.items()}
+missing = [m for m in core if not deps.get(m)]
+print(json.dumps({"ok": len(missing)==0, "status": "ready" if len(missing)==0 else "python_dependency_missing", "python": {"available": True, "version": sys.version.split()[0]}, "dependencies": deps, "missing": missing, "installCommand": "pip install -r requirements-ml.txt" if missing else None}))
+`.trim();
+}
+
+export async function probePythonDependencies({ pythonBin = getPythonBin(), timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, ['-c', 'import pandas, numpy, sklearn, joblib'], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-      timeout: 8000,
-    });
+    let stdout = '';
     let stderr = '';
+    const proc = spawn(pythonBin, ['-c', dependencyProbeScript()], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    });
+    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    proc.on('error', (err) => resolve({ ok: false, spawnError: err.message }));
-    proc.on('close', (code) => {
-      if (code === 0) return resolve({ ok: true });
-      const missing = ['pandas', 'numpy', 'sklearn', 'joblib'].filter((m) => stderr.includes(m) || stderr.includes('No module'));
-      resolve({ ok: false, missing: missing.length ? missing : ['pandas', 'numpy', 'sklearn', 'joblib'], stderr });
+    proc.on('error', (err) => {
+      resolve({
+        ok: false,
+        status: 'python_unavailable',
+        message: `Cannot start Python (${pythonBin}): ${err.message}`,
+        python: { available: false, version: null },
+        dependencies: Object.fromEntries(Object.keys(DEPENDENCY_MODULES).map((name) => [name, false])),
+        missing: REQUIRED_DEPENDENCIES,
+        pythonBin,
+        spawnError: err.message,
+      });
+    });
+    proc.on('close', () => {
+      try {
+        const lines = stdout.trim().split('\n').filter(Boolean);
+        const parsed = JSON.parse(lines[lines.length - 1]);
+        resolve({ ...parsed, pythonBin });
+      } catch {
+        resolve({
+          ok: false,
+          status: 'python_dependency_missing',
+          message: 'Python check failed.',
+          python: { available: true, version: null },
+          dependencies: Object.fromEntries(Object.keys(DEPENDENCY_MODULES).map((name) => [name, false])),
+          missing: REQUIRED_DEPENDENCIES,
+          pythonBin,
+          stdout,
+          stderr: stderr.slice(0, 500),
+        });
+      }
     });
   });
 }
 
+function trainPythonDiagnostics(depCheck) {
+  return {
+    bin: depCheck.pythonBin || getPythonBin(),
+    version: depCheck.python?.version ?? null,
+    dependencyStatus: depCheck.status || (depCheck.ok ? 'ready' : 'python_dependency_missing'),
+    missing: Array.isArray(depCheck.missing) ? depCheck.missing : [],
+  };
+}
+
+function withFailureDiagnostics(result, request, depCheck) {
+  return sanitizeJson({
+    ...result,
+    datasetId: request.datasetId || result.datasetId,
+    python: trainPythonDiagnostics(depCheck),
+  });
+}
+
 class TrainingService {
+  constructor({ dependencyChecker = probePythonDependencies, spawnTraining = null } = {}) {
+    this.dependencyChecker = dependencyChecker;
+    this.spawnTraining = spawnTraining;
+  }
+
   locateDataset(datasetPath) {
     return resolveDatasetPath(datasetPath);
+  }
+
+  async runTrainingProcess(args) {
+    if (this.spawnTraining) return this.spawnTraining(args);
+
+    return new Promise((resolve) => {
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const proc = spawn(getPythonBin(), args, {
+        cwd: REPO_ROOT,
+        env: { ...process.env, ML_ARTIFACTS_DIR: ARTIFACTS_DIR },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        proc.kill('SIGKILL');
+        resolve({ ok: false, status: 'training_failed', message: 'Training timed out.', details: { timeoutMs: DEFAULT_TIMEOUT_MS, stdout, stderr } });
+      }, DEFAULT_TIMEOUT_MS);
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      proc.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ ok: false, status: 'training_failed', message: `Failed to start Python training: ${err.message}`, details: { stderr } });
+      });
+      proc.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const parsed = parseLastJson(stdout);
+        if (code !== 0) {
+          resolve(parsed && parsed.ok === false ? parsed : { ok: false, status: 'training_failed', message: 'Training process exited non-zero.', details: { code, stdout, stderr } });
+          return;
+        }
+        resolve(parsed || { ok: false, status: 'training_failed', message: 'Training returned no JSON result.', details: { stdout, stderr } });
+      });
+    });
   }
 
   async train(body = {}) {
     const request = validateTrainRequest(body);
     if (!request.ok) {
-      return { ok: false, status: 'invalid_request', message: request.errors.join(' '), errors: request.errors };
+      return { ok: false, status: 'invalid_request', message: request.errors.join(' '), errors: request.errors, datasetId: request.datasetId || undefined };
     }
 
     let historicalDataset = null;
@@ -147,21 +264,25 @@ class TrainingService {
     // Verify file is non-empty (redundant with locateDataset, but explicit)
     const datasetStat = (() => { try { return fs.statSync(dataset); } catch { return null; } })();
     if (!datasetStat || datasetStat.size === 0) {
-      return { ok: false, status: 'dataset_file_empty', message: 'Dataset file exists but is empty.', path: dataset };
+      return { ok: false, status: 'dataset_file_empty', message: 'Dataset file exists but is empty.', path: dataset, datasetId: request.datasetId || undefined };
     }
 
-    const depCheck = await checkPythonDeps();
+    const depCheck = await this.dependencyChecker({ pythonBin: getPythonBin() });
     if (!depCheck.ok) {
-      if (depCheck.spawnError) {
-        return { ok: false, status: 'training_failed', message: `Failed to start Python: ${depCheck.spawnError}. Ensure python3 is installed.` };
+      if (depCheck.status === 'python_unavailable' || depCheck.spawnError) {
+        return withFailureDiagnostics({
+          ok: false,
+          status: 'training_failed',
+          message: `Failed to start Python: ${depCheck.spawnError || depCheck.message}. Ensure python3 is installed.`,
+        }, request, depCheck);
       }
-      return {
+      return withFailureDiagnostics({
         ok: false,
         status: 'python_dependency_missing',
         message: 'Python ML dependencies are missing. Install requirements-ml.txt before training.',
-        missing: depCheck.missing,
+        missing: Array.isArray(depCheck.missing) ? depCheck.missing : [],
         installCommand: 'pip install -r requirements-ml.txt',
-      };
+      }, request, depCheck);
     }
 
     const args = [
@@ -176,43 +297,19 @@ class TrainingService {
       '--tau-dn', String(body.tauDn ?? body.tauDown ?? 0.001),
     ];
 
-    const result = await new Promise((resolve) => {
-      let stdout = '';
-      let stderr = '';
-      let settled = false;
-      const proc = spawn(PYTHON_BIN, args, {
-        cwd: REPO_ROOT,
-        env: { ...process.env, ML_ARTIFACTS_DIR: ARTIFACTS_DIR },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        proc.kill('SIGKILL');
-        resolve({ ok: false, status: 'training_failed', message: 'Training timed out.', details: { timeoutMs: DEFAULT_TIMEOUT_MS, stdout, stderr } });
-      }, DEFAULT_TIMEOUT_MS);
-      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-      proc.on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ ok: false, status: 'training_failed', message: `Failed to start Python training: ${err.message}`, details: { stderr } });
-      });
-      proc.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        const parsed = parseLastJson(stdout);
-        if (code !== 0) {
-          resolve(parsed && parsed.ok === false ? parsed : { ok: false, status: 'training_failed', message: 'Training process exited non-zero.', details: { code, stdout, stderr } });
-          return;
-        }
-        resolve(parsed || { ok: false, status: 'training_failed', message: 'Training returned no JSON result.', details: { stdout, stderr } });
-      });
-    });
+    const result = await this.runTrainingProcess(args);
 
-    if (!result.ok) return sanitizeJson({ ...result, datasetId: request.datasetId || result.datasetId });
+    if (!result.ok) {
+      const failure = result.status === 'python_dependency_missing'
+        ? {
+            ...result,
+            status: 'training_failed',
+            message: 'Training pipeline reported missing dependencies after /api/ml/dependencies was ready.',
+            details: { ...(result.details || {}), pipelineStatus: result.status, pipelineMissing: result.missing || [] },
+          }
+        : result;
+      return withFailureDiagnostics(failure, request, depCheck);
+    }
 
     const registered = modelRegistry.register({
       modelId: result.modelId,
@@ -251,4 +348,4 @@ class TrainingService {
 }
 
 export const trainingService = new TrainingService();
-export { TrainingService, validateTrainRequest, PYTHON_BIN };
+export { TrainingService, validateTrainRequest, PYTHON_BIN, REQUIRED_DEPENDENCIES, DEPENDENCY_MODULES };

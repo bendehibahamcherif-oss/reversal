@@ -25,7 +25,7 @@ import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
                                                from './pythonInference.js';
 import { validateRequestBody, SchemaError }    from '../ml/mlInferSchema.js';
 import { logger as _log }                      from '../observability/logger.js';
-import { trainingService, EXPECTED_DATASET_PATHS, PYTHON_BIN } from '../ai/trainingService.js';
+import { trainingService, EXPECTED_DATASET_PATHS, getPythonBin, probePythonDependencies } from '../ai/trainingService.js';
 import { modelRegistry } from '../ai/modelRegistry.js';
 
 const log = _log.child({ component: 'mlRoutes' });
@@ -537,41 +537,13 @@ function _workerErrorToStatus(code) {
 
 // ── GET /api/ml/dependencies ──────────────────────────────────────────────────
 //
-// Check Python binary and ML package availability.
-
-const DEP_CHECK_SCRIPT = `
-import sys, json, importlib.util as iu
-pkgs = {"numpy": "numpy", "pandas": "pandas", "sklearn": "sklearn", "joblib": "joblib", "pyarrow": "pyarrow", "xgboost": "xgboost"}
-deps = {label: iu.find_spec(mod) is not None for label, mod in pkgs.items()}
-core = ["numpy","pandas","sklearn","joblib"]
-missing = [m for m in core if not deps[m]]
-print(json.dumps({"ok": len(missing)==0, "status": "ready" if len(missing)==0 else "python_dependency_missing", "python": {"available": True, "version": sys.version.split()[0]}, "dependencies": deps, "missing": missing, "installCommand": "pip install -r requirements-ml.txt" if missing else None}))
-`.trim();
+// Check Python binary and ML package availability. This route intentionally uses
+// the same runtime probe as POST /api/ml/train so a ready dependency response
+// cannot disagree with the training preflight.
 
 mlRoutes.get('/dependencies', async (_req, res) => {
-  const { spawn } = await import('node:child_process');
-  return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    const proc = spawn(PYTHON_BIN, ['-c', DEP_CHECK_SCRIPT], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 10000,
-    });
-    proc.stdout.on('data', (c) => { stdout += c.toString(); });
-    proc.stderr.on('data', (c) => { stderr += c.toString(); });
-    proc.on('error', (err) => {
-      resolve(res.status(200).json({ ok: false, status: 'python_unavailable', message: `Cannot start Python (${PYTHON_BIN}): ${err.message}`, pythonBin: PYTHON_BIN }));
-    });
-    proc.on('close', (code) => {
-      try {
-        const lines = stdout.trim().split('\n');
-        const parsed = JSON.parse(lines[lines.length - 1]);
-        resolve(res.status(200).json({ ...parsed, pythonBin: PYTHON_BIN }));
-      } catch {
-        resolve(res.status(200).json({ ok: false, status: 'python_dependency_missing', message: 'Python check failed.', pythonBin: PYTHON_BIN, stdout, stderr: stderr.slice(0, 500) }));
-      }
-    });
-  });
+  const result = await probePythonDependencies({ pythonBin: getPythonBin() });
+  return res.status(200).json(sanitizeJson(result));
 });
 
 mlRoutes.use((req, res) => {
