@@ -10,6 +10,34 @@ import {
 
 const historicalRoutes = Router();
 
+const SYMBOL_REQUIRED_RESPONSE = {
+  ok: false,
+  status: 'symbol_required',
+  message: 'At least one symbol is required.',
+  expected: {
+    symbols: ['SPY', 'QQQ'],
+  },
+};
+
+export function normalizeHistoricalDownloadSymbols(body = {}) {
+  const rawSymbols = Object.hasOwn(body, 'symbols') ? body.symbols : body.symbol;
+  const values = Array.isArray(rawSymbols)
+    ? rawSymbols
+    : typeof rawSymbols === 'string'
+      ? rawSymbols.split(',')
+      : rawSymbols == null
+        ? []
+        : [rawSymbols];
+
+  return values
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function symbolRequired(res) {
+  return res.status(400).json(SYMBOL_REQUIRED_RESPONSE);
+}
+
 // GET /api/historical/providers
 // List all supported providers with their capability matrix.
 historicalRoutes.get('/providers', (_req, res) => {
@@ -48,11 +76,11 @@ historicalRoutes.get('/datasets/:id/candles', async (req, res) => {
 });
 
 // POST /api/historical/download
-// Trigger a historical data download.
-// Body: { symbol, timeframe, provider, startDate, endDate, limit, purpose, credentials }
+// Trigger historical data downloads.
+// Canonical body: { symbols, timeframe, provider, startDate, endDate, limit, purpose, credentials }
+// Backward compatibility: { symbol } is accepted and normalized to symbols: [symbol].
 historicalRoutes.post('/download', async (req, res) => {
   const {
-    symbol,
     timeframe  = '1d',
     provider   = 'yahoo',
     startDate,
@@ -62,8 +90,10 @@ historicalRoutes.post('/download', async (req, res) => {
     credentials,
   } = req.body || {};
 
-  if (!symbol) {
-    return res.status(400).json({ ok: false, error: 'symbol_required' });
+  const symbols = normalizeHistoricalDownloadSymbols(req.body || {});
+
+  if (!symbols.length) {
+    return symbolRequired(res);
   }
 
   const VALID_PROVIDERS = ['yahoo', 'twelvedata', 'polygon', 'alphaVantage'];
@@ -77,27 +107,47 @@ historicalRoutes.post('/download', async (req, res) => {
   }
 
   try {
-    const result = await downloadHistoricalDataset({
-      symbol: String(symbol).toUpperCase(),
-      timeframe,
-      provider,
-      startDate,
-      endDate,
-      limit,
-      purpose,
-      credentials,
-    });
-
-    if (!result.ok) {
-      return res.status(422).json({ ok: false, error: result.error, detail: result.detail, warnings: result.warnings });
+    const results = [];
+    for (const symbol of symbols) {
+      const result = await downloadHistoricalDataset({
+        symbol,
+        timeframe,
+        provider,
+        startDate,
+        endDate,
+        limit,
+        purpose,
+        credentials,
+      });
+      results.push({ symbol, ...result });
     }
+
+    const failed = results.find((result) => !result.ok);
+    if (failed) {
+      return res.status(422).json({
+        ok: false,
+        error: failed.error,
+        status: failed.error,
+        symbol: failed.symbol,
+        detail: failed.detail,
+        warnings: failed.warnings,
+        results,
+      });
+    }
+
+    const datasets = results.map((result) => result.dataset);
+    const candleCount = results.reduce((total, result) => total + (result.candleCount || 0), 0);
+    const skipped = results.reduce((total, result) => total + (result.skipped || 0), 0);
+    const warnings = results.flatMap((result) => result.warnings ?? []);
 
     return res.json({
       ok:         true,
-      dataset:    result.dataset,
-      candleCount: result.candleCount,
-      skipped:    result.skipped,
-      warnings:   result.warnings,
+      symbols,
+      dataset:    datasets[0] ?? null,
+      datasets,
+      candleCount,
+      skipped,
+      warnings,
     });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err.message });
