@@ -4,7 +4,7 @@
  * serializes the result to JSON, and registers the dataset in the registry.
  */
 
-import { writeFileSync, existsSync, statSync } from 'fs';
+import { writeFileSync, existsSync, statSync, mkdirSync } from 'fs';
 import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 
@@ -84,6 +84,7 @@ export async function downloadHistoricalDataset({
 
   const sym      = String(symbol).toUpperCase();
   const filename = `${sym}_${timeframe}_${provider}_${Date.now()}.json`;
+  mkdirSync(dir, { recursive: true });
   const filePath = join(dir, filename);
 
   const payload = {
