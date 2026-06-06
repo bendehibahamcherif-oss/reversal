@@ -45,6 +45,7 @@ function resolveTimestamp(value, fallback) {
  */
 export async function downloadHistoricalDataset({
   symbol,
+  symbols,
   timeframe = '1d',
   provider = 'yahoo',
   startDate,
@@ -52,10 +53,16 @@ export async function downloadHistoricalDataset({
   limit,
   purpose = 'general',
   credentials,
+  session = 'RTH',
 }) {
   const adapter = PROVIDERS[provider];
   if (!adapter) return { ok: false, error: `unknown_provider:${provider}` };
-  if (!symbol)  return { ok: false, error: 'symbol_required' };
+  const normalizedSymbols = (Array.isArray(symbols) ? symbols : [symbol])
+    .map((value) => String(value ?? '').trim().toUpperCase())
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+  if (!normalizedSymbols.length) return { ok: false, error: 'symbol_required' };
+  symbol = normalizedSymbols[0];
 
   const now      = Date.now();
   const startMs  = resolveTimestamp(startDate, now - 365 * 86_400_000);
@@ -83,20 +90,26 @@ export async function downloadHistoricalDataset({
              : dirs.RAW_DIR;
 
   const sym      = String(symbol).toUpperCase();
-  const filename = `${sym}_${timeframe}_${provider}_${Date.now()}.json`;
+  const compact = (value) => String(value || '').replace(/[^0-9A-Za-z]/g, '') || 'na';
+  const datasetId = `hist_${sym}_${timeframe}_${String(session || 'RTH').toUpperCase()}_${compact(startDate || result.startDate)}_${compact(endDate || result.endDate)}_${provider}`;
+  const filename = `${datasetId}.json`;
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, filename);
 
   const payload = {
     meta: {
+      datasetId,
+      symbols:     [sym],
       symbol:      sym,
       timeframe,
       provider,
       startDate:   result.startDate,
       endDate:     result.endDate,
+      rowCount:    result.candles.length,
       candleCount: result.candles.length,
       downloadedAt: new Date().toISOString(),
       purpose,
+      session,
       sourceType:  result.candles[0]?.sourceType ?? 'market_data',
       warnings:    result.warnings ?? [],
     },
@@ -109,15 +122,21 @@ export async function downloadHistoricalDataset({
   try { fileSize = statSync(filePath).size; } catch { fileSize = JSON.stringify(payload).length; }
 
   const dataset = historicalDatasetRegistry.register({
+    datasetId,
     symbol:      sym,
+    symbols:     [sym],
     timeframe,
     provider,
     startDate:   result.startDate ?? '',
     endDate:     result.endDate   ?? '',
     candleCount: result.candles.length,
+    rowCount:    result.candles.length,
+    rowsBySymbol: { [sym]: result.candles.length },
     filePath,
+    files:       { csv: null, parquet: null, json: filePath },
     fileSize,
     purpose,
+    session,
     sourceType:  payload.meta.sourceType,
     warnings:    result.warnings ?? [],
   });
@@ -136,11 +155,12 @@ export async function downloadHistoricalDataset({
  */
 export async function readDatasetCandlesAsync(datasetId) {
   const record = historicalDatasetRegistry.get(datasetId);
-  if (!record) return { ok: false, error: 'dataset_not_found' };
-  if (!existsSync(record.filePath)) return { ok: false, error: 'file_not_found' };
+  if (!record) return { ok: false, error: 'dataset_not_found', datasetId };
+  const filePath = record.files?.csv || record.files?.parquet || record.files?.json || record.filePath;
+  if (!filePath || !existsSync(filePath)) return { ok: false, error: 'dataset_file_missing', datasetId, dataset: record };
 
   try {
-    const raw    = await readFile(record.filePath, 'utf-8');
+    const raw    = await readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
     return { ok: true, candles: parsed.candles ?? [], meta: parsed.meta ?? {}, dataset: record };
   } catch (err) {

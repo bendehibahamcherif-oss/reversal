@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { multiAssetEngine } from '../multiAsset/multiAssetEngine.js';
-import { getDataset } from '../historical/historicalDataService.js';
+import { readDatasetCandlesAsync } from '../historical/historicalDataService.js';
+import { sanitizeJson } from '../historical/jsonSafety.js';
+import { correlationFromPairs, groupedReturns } from './macroRoutes.js';
 
 const multiAssetRoutes = Router();
 
@@ -20,19 +22,39 @@ function parseWindow(raw) {
 // GET /api/multi-asset/correlation
 // Query: symbols (comma-separated), timeframe, window, datasetId (optional)
 // Response: { ok, matrix, symbols, window, timeframe, source, dataSource? }
-multiAssetRoutes.get('/correlation', (req, res) => {
+multiAssetRoutes.get('/correlation', async (req, res) => {
   const symbols = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'GLD', 'TLT'];
   const timeframe = req.query.timeframe || '1d';
   const window = parseWindow(req.query.window) ?? 20;
 
   let dataSource = null;
-  if (req.query.datasetId) {
-    const record = getDataset(req.query.datasetId);
-    if (!record) return res.status(404).json({ ok: false, error: 'dataset_not_found', datasetId: req.query.datasetId });
-    dataSource = { datasetId: req.query.datasetId, symbol: record.symbol, timeframe: record.timeframe, provider: record.provider };
+  const datasetId = req.query.datasetId ? String(req.query.datasetId) : null;
+  if (datasetId) {
+    const read = await readDatasetCandlesAsync(datasetId);
+    if (!read.ok) {
+      return res.status(read.error === 'dataset_not_found' ? 404 : 200).json(sanitizeJson({
+        ok: false,
+        status: read.error,
+        error: read.error,
+        message: read.error === 'dataset_not_found' ? 'Historical dataset not found.' : 'Historical dataset exists but no usable CSV/Parquet file was found.',
+        datasetId,
+      }));
+    }
+    dataSource = { type: 'historical_dataset', datasetId: read.dataset.datasetId, provider: read.dataset.provider, rowCount: read.dataset.rowCount };
+    const returns = groupedReturns(read.candles, symbols);
+    const matrix = symbols.map((a) => symbols.map((b) => (a === b ? 1 : correlationFromPairs([...((returns.get(a) || new Map()).entries())]
+      .filter(([time, value]) => Number.isFinite(value) && Number.isFinite((returns.get(b) || new Map()).get(time)))
+      .map(([time, value]) => [value, (returns.get(b) || new Map()).get(time)])))));
+    const first = returns.get(symbols[0]) || new Map();
+    const second = returns.get(symbols[1]) || new Map();
+    const observations = symbols.length >= 2 ? [...first.keys()].filter((time) => second.has(time)).length : 0;
+    if (observations < 2 || matrix.flat().some((v) => v === null)) {
+      return res.status(200).json(sanitizeJson({ ok: true, datasetId, matrix: [], symbols, observations, window, timeframe, status: 'not_enough_data', message: 'Not enough overlapping observations.', dataSource }));
+    }
+    return res.status(200).json(sanitizeJson({ ok: true, datasetId, matrix, symbols, observations, window, timeframe, status: 'ok', dataSource }));
   }
 
-  return res.status(200).json({ ok: true, matrix: [], symbols, window, timeframe, status: 'not_enough_data', dataSource });
+  return res.status(200).json({ ok: true, matrix: [], symbols, observations: 0, window, timeframe, status: 'not_enough_data', message: 'Not enough overlapping observations.', dataSource });
 });
 
 // ── Rolling beta ──────────────────────────────────────────────────────────────

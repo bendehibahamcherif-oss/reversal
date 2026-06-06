@@ -166,3 +166,39 @@ test('POST /api/historical/download returns structured symbol_required JSON for 
   });
   assert.equal(fetchCalls.length, 0);
 });
+
+
+test('POST /api/historical/download returns canonical datasetId/id and JSON-safe fields', async () => {
+  const { response, body } = await request('/api/historical/download', {
+    provider: 'yahoo', symbols: ['NFLX'], timeframe: '1d', startDate: '2025-06-06', endDate: '2026-06-06'
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.dataset.datasetId, body.dataset.id);
+  assert.equal(body.dataset.rowCount, 2);
+  assert.deepEqual(body.dataset.symbols, ['NFLX']);
+  assert.equal(JSON.stringify(body).includes('undefined'), false);
+});
+
+test('GET /api/historical/datasets and detail return datasetId, and old id-only records normalize', async () => {
+  const legacy = { id: 'legacy_id_only', symbol: 'SPY', timeframe: '1d', provider: 'yahoo', candleCount: 0, filePath: '' };
+  historicalDatasetRegistry.saveDataset(legacy);
+  const listResponse = await originalFetch(`${baseUrl}/api/historical/datasets`);
+  const listBody = await listResponse.json();
+  assert.equal(listResponse.status, 200);
+  assert.ok(listBody.datasets.every((dataset) => dataset.datasetId && dataset.id));
+  const legacyListed = listBody.datasets.find((dataset) => dataset.datasetId === 'legacy_id_only');
+  assert.deepEqual(legacyListed.symbols, ['SPY']);
+  assert.equal(legacyListed.rowCount, 0);
+
+  const detailResponse = await originalFetch(`${baseUrl}/api/historical/datasets/legacy_id_only`);
+  const detailBody = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailBody.dataset.datasetId, 'legacy_id_only');
+});
+
+test('GET /api/historical/datasets/:datasetId returns structured dataset_not_found', async () => {
+  const response = await originalFetch(`${baseUrl}/api/historical/datasets/missing_dataset`);
+  const body = await response.json();
+  assert.equal(response.status, 404);
+  assert.deepEqual(body, { ok: false, status: 'dataset_not_found', message: 'Historical dataset not found.', datasetId: 'missing_dataset' });
+});

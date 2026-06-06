@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { modelRegistry, ARTIFACTS_DIR } from './modelRegistry.js';
+import { getDataset } from '../historical/historicalDataService.js';
+import { sanitizeJson } from '../historical/jsonSafety.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,7 +52,8 @@ function validateTrainRequest(body = {}) {
   if (!Number.isInteger(horizon) || horizon < 1 || horizon > 1000) errors.push('horizon must be an integer between 1 and 1000.');
   const promote = body.promote === true;
   const datasetPath = body.datasetPath === undefined ? null : String(body.datasetPath);
-  return { ok: errors.length === 0, errors, symbol, timeframe, horizon, promote, datasetPath };
+  const datasetId = body.datasetId === undefined || body.datasetId === null ? null : String(body.datasetId);
+  return { ok: errors.length === 0, errors, symbol, timeframe, horizon, promote, datasetPath, datasetId };
 }
 
 function parseLastJson(stdout) {
@@ -78,7 +81,32 @@ class TrainingService {
       return { ok: false, status: 'invalid_request', message: request.errors.join(' '), errors: request.errors };
     }
 
-    const dataset = this.locateDataset(request.datasetPath);
+    let historicalDataset = null;
+    let dataset = null;
+    if (request.datasetId) {
+      historicalDataset = getDataset(request.datasetId);
+      if (!historicalDataset) {
+        return {
+          ok: false,
+          status: 'dataset_not_found',
+          message: 'Historical dataset not found.',
+          datasetId: request.datasetId,
+        };
+      }
+      dataset = [historicalDataset.files?.csv, historicalDataset.files?.parquet, historicalDataset.files?.json, historicalDataset.filePath]
+        .filter(Boolean)
+        .find(fileExistsNonEmpty) || null;
+      if (!dataset) {
+        return {
+          ok: false,
+          status: 'dataset_file_missing',
+          message: 'Historical dataset exists but no usable CSV/Parquet file was found.',
+          datasetId: request.datasetId,
+        };
+      }
+    } else {
+      dataset = this.locateDataset(request.datasetPath);
+    }
     if (!dataset) {
       return {
         ok: false,
@@ -136,7 +164,7 @@ class TrainingService {
       });
     });
 
-    if (!result.ok) return result;
+    if (!result.ok) return sanitizeJson({ ...result, datasetId: request.datasetId || result.datasetId });
 
     const registered = modelRegistry.register({
       modelId: result.modelId,
@@ -169,6 +197,7 @@ class TrainingService {
       metrics: registered.metrics,
       promoted,
       champion,
+      datasetId: request.datasetId || undefined,
     };
   }
 }
