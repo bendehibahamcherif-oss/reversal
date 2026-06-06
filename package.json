@@ -7,6 +7,7 @@
     "start": "node server.js",
     "server:smoke": "node scripts/server-smoke.cjs",
     "smoke:full": "node scripts/full-platform-smoke.js",
+    "smoke:backend": "node scripts/full-backend-smoke.js",
     "test:ml": "node scripts/test-ml-inference.cjs",
     "check:server": "node --check server/index.cjs",
     "test": "node --test --test-concurrency=1 server/tests/*.test.js",

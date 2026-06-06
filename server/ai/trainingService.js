@@ -31,8 +31,10 @@ const DEPENDENCY_MODULES = {
   joblib: 'joblib',
   pyarrow: 'pyarrow',
   xgboost: 'xgboost',
+  lightgbm: 'lightgbm',
 };
 const REQUIRED_DEPENDENCIES = ['numpy', 'pandas', 'sklearn', 'joblib'];
+const OPTIONAL_DEPENDENCIES = ['pyarrow', 'xgboost', 'lightgbm'];
 
 export const EXPECTED_DATASET_PATHS = [
   path.join(__dirname, 'data', 'features_snapshot.parquet'),
@@ -142,9 +144,26 @@ function dependencyProbeScript() {
 import sys, json, importlib.util as iu
 pkgs = ${JSON.stringify(DEPENDENCY_MODULES)}
 core = ${JSON.stringify(REQUIRED_DEPENDENCIES)}
+optional = ${JSON.stringify(OPTIONAL_DEPENDENCIES)}
 deps = {label: iu.find_spec(mod) is not None for label, mod in pkgs.items()}
-missing = [m for m in core if not deps.get(m)]
-print(json.dumps({"ok": len(missing)==0, "status": "ready" if len(missing)==0 else "python_dependency_missing", "python": {"available": True, "version": sys.version.split()[0]}, "dependencies": deps, "missing": missing, "installCommand": "pip install -r requirements-ml.txt" if missing else None}))
+required_missing = [m for m in core if not deps.get(m)]
+optional_missing = [m for m in optional if not deps.get(m)]
+if required_missing:
+    status = "python_dependency_missing"
+elif optional_missing:
+    status = "ready_with_optional_missing"
+else:
+    status = "ready"
+print(json.dumps({
+    "ok": len(required_missing)==0,
+    "status": status,
+    "python": {"available": True, "version": sys.version.split()[0], "bin": sys.executable, "executable": sys.executable},
+    "dependencies": deps,
+    "requiredMissing": required_missing,
+    "optionalMissing": optional_missing,
+    "missing": required_missing,
+    "installCommand": "pip install -r requirements-ml.txt" if required_missing else None,
+}))
 `.trim();
 }
 
@@ -163,8 +182,10 @@ export async function probePythonDependencies({ pythonBin = getPythonBin(), time
         ok: false,
         status: 'python_unavailable',
         message: `Cannot start Python (${pythonBin}): ${err.message}`,
-        python: { available: false, version: null },
+        python: { available: false, version: null, bin: pythonBin, executable: pythonBin },
         dependencies: Object.fromEntries(Object.keys(DEPENDENCY_MODULES).map((name) => [name, false])),
+        requiredMissing: REQUIRED_DEPENDENCIES,
+        optionalMissing: OPTIONAL_DEPENDENCIES,
         missing: REQUIRED_DEPENDENCIES,
         pythonBin,
         spawnError: err.message,
@@ -180,8 +201,10 @@ export async function probePythonDependencies({ pythonBin = getPythonBin(), time
           ok: false,
           status: 'python_dependency_missing',
           message: 'Python check failed.',
-          python: { available: true, version: null },
+          python: { available: true, version: null, bin: pythonBin, executable: pythonBin },
           dependencies: Object.fromEntries(Object.keys(DEPENDENCY_MODULES).map((name) => [name, false])),
+          requiredMissing: REQUIRED_DEPENDENCIES,
+          optionalMissing: OPTIONAL_DEPENDENCIES,
           missing: REQUIRED_DEPENDENCIES,
           pythonBin,
           stdout,
