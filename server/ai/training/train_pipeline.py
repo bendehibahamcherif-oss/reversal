@@ -167,7 +167,6 @@ def train_pipeline(
     lr = LogisticRegression(
         max_iter=2000,
         solver="lbfgs",
-        multi_class="multinomial",
         C=1.0,
         class_weight="balanced",
         random_state=seed,
