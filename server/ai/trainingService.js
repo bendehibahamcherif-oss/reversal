@@ -108,12 +108,28 @@ class TrainingService {
       dataset = this.locateDataset(request.datasetPath);
     }
     if (!dataset) {
+      // If a datasetId was provided but mlRoutes didn't resolve it (safety net),
+      // return dataset_not_found rather than the generic dataset_missing.
+      if (body.datasetId) {
+        return {
+          ok: false,
+          status: 'dataset_not_found',
+          message: `Historical dataset '${body.datasetId}' was selected but could not be resolved to a training file. Re-download the dataset.`,
+          datasetId: body.datasetId,
+        };
+      }
       return {
         ok: false,
         status: 'dataset_missing',
         message: 'No dataset snapshot found. Generate or upload a dataset before training.',
         expectedPaths: EXPECTED_DATASET_PATHS,
       };
+    }
+
+    // Verify file is non-empty (redundant with locateDataset, but explicit)
+    const datasetStat = (() => { try { return fs.statSync(dataset); } catch { return null; } })();
+    if (!datasetStat || datasetStat.size === 0) {
+      return { ok: false, status: 'dataset_file_empty', message: 'Dataset file exists but is empty.', path: dataset };
     }
 
     const args = [

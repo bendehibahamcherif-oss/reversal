@@ -1,7 +1,10 @@
 /**
  * Historical Data Service — main orchestrator.
  * Dispatches download requests to the appropriate provider adapter,
- * serializes the result to JSON, and registers the dataset in the registry.
+ * serializes candles to JSON + CSV, and registers the dataset in the registry.
+ *
+ * CSV is the canonical ML-training format expected by train_pipeline.py.
+ * JSON is kept as a full-fidelity archive (includes provider/session/sourceType).
  */
 
 import { writeFileSync, existsSync, statSync, mkdirSync } from 'fs';
@@ -22,6 +25,9 @@ const PROVIDERS = {
   alphaVantage: alphaVantageHistoricalProvider,
 };
 
+// Columns required by train_pipeline.py
+const CSV_COLUMNS = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume'];
+
 function resolveTimestamp(value, fallback) {
   if (!value) return fallback;
   if (typeof value === 'number') return value > 1e12 ? value : value * 1000;
@@ -30,7 +36,20 @@ function resolveTimestamp(value, fallback) {
 }
 
 /**
- * Download historical candles and store them as a dataset.
+ * Convert canonical candle array to CSV string.
+ * timestamp is written as ISO 8601 — pd.to_datetime() in Python handles it.
+ */
+function candlesToCsv(candles) {
+  const header = CSV_COLUMNS.join(',');
+  const rows = candles.map((c) => {
+    const ts = new Date(c.timestamp).toISOString();
+    return [ts, c.symbol, c.open, c.high, c.low, c.close, c.volume].join(',');
+  });
+  return [header, ...rows].join('\n');
+}
+
+/**
+ * Download historical candles and store them as CSV + JSON dataset.
  *
  * @param {object} opts
  * @param {string} opts.symbol
@@ -95,6 +114,7 @@ export async function downloadHistoricalDataset({
   const filename = `${datasetId}.json`;
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, filename);
+  const csvPath  = join(dir, `${datasetId}.csv`);
 
   const payload = {
     meta: {
@@ -116,10 +136,16 @@ export async function downloadHistoricalDataset({
     candles: result.candles,
   };
 
+  // Write full JSON archive
   writeFileSync(filePath, JSON.stringify(payload));
 
+  // Write CSV for Python train_pipeline.py (required columns only)
+  writeFileSync(csvPath, candlesToCsv(result.candles));
+
   let fileSize = 0;
+  let csvSize  = 0;
   try { fileSize = statSync(filePath).size; } catch { fileSize = JSON.stringify(payload).length; }
+  try { csvSize  = statSync(csvPath).size;  } catch { csvSize  = 0; }
 
   const dataset = historicalDatasetRegistry.register({
     datasetId,
@@ -133,7 +159,7 @@ export async function downloadHistoricalDataset({
     rowCount:    result.candles.length,
     rowsBySymbol: { [sym]: result.candles.length },
     filePath,
-    files:       { csv: null, parquet: null, json: filePath },
+    files:       { csv: csvPath, parquet: null, json: filePath },
     fileSize,
     purpose,
     session,
@@ -169,10 +195,101 @@ export async function readDatasetCandlesAsync(datasetId) {
 }
 
 /**
- * List all registered datasets (optionally filtered).
+ * Get the best file path for ML training (CSV preferred, JSON fallback).
+ * Returns { ok, path, format } or { ok: false, error }.
+ */
+export function resolveDatasetForTraining(datasetId) {
+  const record = historicalDatasetRegistry.get(datasetId);
+  if (!record) {
+    return { ok: false, error: 'dataset_not_found', datasetId };
+  }
+
+  const csvPath = record.files?.csv || null;
+  const candidates = [
+    { path: csvPath,         format: 'csv' },
+    { path: record.filePath, format: 'json' },
+  ].filter((c) => c.path);
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate.path)) continue;
+    let size = 0;
+    try { size = statSync(candidate.path).size; } catch { continue; }
+    if (size === 0) continue;
+    if (candidate.format === 'json') {
+      // JSON is not readable by train_pipeline.py — skip
+      continue;
+    }
+    return { ok: true, path: candidate.path, format: candidate.format, dataset: record };
+  }
+
+  // CSV missing — check if JSON exists (file_missing vs csv_not_generated)
+  const jsonExists = record.filePath && existsSync(record.filePath);
+  const csvExists  = csvPath && existsSync(csvPath);
+
+  if (!csvExists && jsonExists) {
+    return { ok: false, error: 'dataset_csv_missing', datasetId, detail: 'Dataset JSON exists but CSV was not generated. Re-download the dataset.', filePath: record.filePath, csvPath: csvPath ?? null };
+  }
+
+  const candidatePaths = candidates.map((c) => c.path);
+  return { ok: false, error: 'dataset_file_missing', datasetId, candidatePaths, dataset: record };
+}
+
+/**
+ * Diagnose a dataset for ML readiness.
+ */
+export function diagnoseDataset(datasetId) {
+  const record = historicalDatasetRegistry.get(datasetId);
+  if (!record) {
+    return { ok: true, datasetId, registryFound: false, fileExists: false, csvFileExists: false, usableForMl: false, issues: ['dataset_not_found'] };
+  }
+
+  const csvPath    = record.files?.csv || null;
+  const jsonExists = record.filePath ? existsSync(record.filePath) : false;
+  const csvExists  = csvPath ? existsSync(csvPath) : false;
+
+  let jsonSize = 0;
+  let csvSize  = 0;
+  try { if (jsonExists) jsonSize = statSync(record.filePath).size;  } catch { /* */ }
+  try { if (csvExists)  csvSize  = statSync(csvPath).size;          } catch { /* */ }
+
+  const issues = [];
+  if (!jsonExists) issues.push('dataset_file_missing');
+  if (!csvExists)  issues.push('dataset_csv_missing');
+  if (csvExists && csvSize === 0) issues.push('dataset_file_empty');
+
+  const usableForMl = csvExists && csvSize > 0;
+
+  return {
+    ok: true,
+    datasetId,
+    registryFound:   true,
+    dataset:         record,
+    fileExists:      jsonExists,
+    fileSizeBytes:   jsonSize,
+    csvFileExists:   csvExists,
+    csvSizeBytes:    csvSize,
+    usableForMl,
+    issues,
+    candidatePaths: [csvPath, record.filePath].filter(Boolean),
+  };
+}
+
+/**
+ * List all registered datasets with live file-existence status.
  */
 export function listDatasets(filters = {}) {
-  return historicalDatasetRegistry.list(filters);
+  const records = historicalDatasetRegistry.list(filters);
+  return records.map((d) => {
+    const csvPath    = d.files?.csv || null;
+    const jsonExists = d.filePath ? existsSync(d.filePath) : false;
+    const csvExists  = csvPath ? existsSync(csvPath) : false;
+    return {
+      ...d,
+      fileExists:    jsonExists,
+      csvFileExists: csvExists,
+      status:        csvExists ? 'ready' : (jsonExists ? 'csv_missing' : 'file_missing'),
+    };
+  });
 }
 
 /**
@@ -183,14 +300,17 @@ export function getDataset(id) {
 }
 
 /**
- * Delete a dataset record and its backing file.
+ * Delete a dataset record and its backing files.
  */
 export async function deleteDataset(id) {
   const record = historicalDatasetRegistry.get(id);
   if (!record) return { ok: false, error: 'dataset_not_found' };
 
-  if (existsSync(record.filePath)) {
-    try { await unlink(record.filePath); } catch { /* already gone */ }
+  const csvPath = record.files?.csv || null;
+  for (const p of [record.filePath, csvPath].filter(Boolean)) {
+    if (existsSync(p)) {
+      try { await unlink(p); } catch { /* already gone */ }
+    }
   }
 
   const deleted = historicalDatasetRegistry.delete(id);

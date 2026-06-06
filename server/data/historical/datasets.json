@@ -1,1 +1,37 @@
-{"version":1,"datasets":[]}
+{
+  "version": 1,
+  "datasets": [
+    {
+      "datasetId": "hist_SPY_1d_RTH_20260101_20260101_yahoo_2c8c08c9",
+      "id": "hist_SPY_1d_RTH_20260101_20260101_yahoo_2c8c08c9",
+      "symbol": "SPY",
+      "symbols": [
+        "SPY"
+      ],
+      "timeframe": "1d",
+      "provider": "yahoo",
+      "startDate": "2026-01-01",
+      "endDate": "2026-01-01",
+      "session": "RTH",
+      "purpose": "ml",
+      "rowCount": 1,
+      "candleCount": 1,
+      "rowsBySymbol": {
+        "SPY": 1
+      },
+      "files": {
+        "csv": null,
+        "parquet": null,
+        "json": "/tmp/ml-csv-miss-Ryz2Zf/SPY_1d_yahoo_test.json"
+      },
+      "filePath": "/tmp/ml-csv-miss-Ryz2Zf/SPY_1d_yahoo_test.json",
+      "fileSize": 114,
+      "sourceType": "market_data",
+      "warnings": [],
+      "schema": "HistoricalCandle.v1",
+      "createdAt": "2026-06-06T13:04:14.648Z",
+      "status": "ready",
+      "dataHash": "sha256:415075d64e2b76d9edd4432fcd8a9175e118a9d3a86941233d3a534d0046243d"
+    }
+  ]
+}

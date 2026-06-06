@@ -1,0 +1,4 @@
+# Ignore downloaded dataset files — these are runtime artifacts, not source
+*.csv
+*.json
+*.parquet

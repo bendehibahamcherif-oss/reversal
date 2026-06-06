@@ -137,6 +137,43 @@ test('POST /api/ml/train with no dataset returns dataset_missing JSON', async ()
   assert.ok(Array.isArray(body.expectedPaths));
 });
 
+test('POST /api/ml/train with unknown datasetId returns dataset_not_found (not dataset_missing)', async () => {
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1m', horizon: 20, datasetId: 'nonexistent-dataset-id' }),
+  });
+  assert.equal(response.status, 404);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'dataset_not_found');
+  assert.equal(body.datasetId, 'nonexistent-dataset-id');
+  assert.notEqual(body.status, 'dataset_missing', 'Must NOT return dataset_missing when datasetId was provided');
+});
+
+test('POST /api/ml/train with registered dataset but csv missing returns dataset_csv_missing', async () => {
+  const { historicalDatasetRegistry } = await import('../historical/historicalDatasetRegistry.js');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ml-csv-miss-'));
+  const jsonPath = path.join(tmpDir, 'SPY_1d_yahoo_test.json');
+  fs.writeFileSync(jsonPath, JSON.stringify([{ timestamp: '2026-01-01T00:00:00Z', symbol: 'SPY', open: 500, high: 502, low: 499, close: 501, volume: 1000000 }]));
+
+  const record = historicalDatasetRegistry.register({
+    symbol: 'SPY', timeframe: '1d', provider: 'yahoo',
+    startDate: '2026-01-01', endDate: '2026-01-01', candleCount: 1,
+    filePath: jsonPath,
+    fileSize: fs.statSync(jsonPath).size,
+    csvPath: null,  // No CSV
+    purpose: 'ml',
+  });
+
+  const { response, body } = await request('/api/ml/train', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY', timeframe: '1d', horizon: 20, datasetId: record.id }),
+  });
+  assert.equal(response.status, 422);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, 'dataset_csv_missing');
+  assert.equal(body.datasetId, record.id);
+});
+
 
 
 test('POST /api/ml/train with small synthetic CSV returns JSON not_enough_data', async () => {

@@ -19,6 +19,7 @@ import { readFile }      from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { sanitizeJson } from '../historical/jsonSafety.js';
+import { resolveDatasetForTraining } from '../historical/historicalDataService.js';
 
 import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
                                                from './pythonInference.js';
@@ -225,6 +226,42 @@ mlRoutes.get('/model', async (_req, res) => {
 
 mlRoutes.post('/train', async (req, res) => {
   const body = { ...(req.body || {}) };
+
+  log.info('train request received', {
+    route: 'POST /api/ml/train',
+    symbol: body.symbol,
+    timeframe: body.timeframe,
+    horizon: body.horizon,
+    datasetId: body.datasetId ?? null,
+    datasetPath: body.datasetPath ?? null,
+  });
+
+  // Resolve datasetId → CSV path before handing off to trainingService.
+  // train_pipeline.py requires .csv or .parquet — not .json.
+  if (body.datasetId && !body.datasetPath) {
+    const resolved = resolveDatasetForTraining(String(body.datasetId));
+    log.info('dataset resolution', { datasetId: body.datasetId, resolved });
+
+    if (!resolved.ok) {
+      const statusMap = {
+        dataset_not_found:    { http: 404, status: 'dataset_not_found',   message: 'Historical dataset was selected but was not found in the backend registry.' },
+        dataset_file_missing: { http: 404, status: 'dataset_file_missing', message: 'Historical dataset exists in registry but its file does not exist on this server. Re-download the dataset.' },
+        dataset_csv_missing:  { http: 422, status: 'dataset_csv_missing',  message: 'Dataset JSON exists but the training-ready CSV was not generated. Re-download the dataset.' },
+      };
+      const mapped = statusMap[resolved.error] ?? { http: 422, status: resolved.error, message: resolved.detail ?? 'Dataset could not be resolved.' };
+      return res.status(mapped.http).json(sanitizeJson({
+        ok:        false,
+        status:    mapped.status,
+        message:   mapped.message,
+        datasetId: body.datasetId,
+        ...(resolved.candidatePaths ? { candidatePaths: resolved.candidatePaths } : {}),
+      }));
+    }
+
+    body.datasetPath = resolved.path;
+    log.info('dataset resolved to CSV', { datasetId: body.datasetId, csvPath: resolved.path });
+  }
+
 
   try {
     const result = await trainingService.train(body);
