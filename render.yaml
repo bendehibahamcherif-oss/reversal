@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: starter
 
-    buildCommand: npm install
+    buildCommand: npm install && python3 -m pip install --upgrade pip && python3 -m pip install -r requirements-ml.txt
     startCommand: node server/index.cjs
 
     healthCheckPath: /health

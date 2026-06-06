@@ -209,7 +209,14 @@ def train(args) -> dict[str, Any]:
 
     modules, missing = dependency_imports()
     if missing:
-        return {"ok": False, "status": "training_failed", "message": "Python ML dependencies are missing. Install requirements-ml.txt before training.", "details": {"missingDependencies": missing}}
+        return {
+            "ok": False,
+            "status": "python_dependency_missing",
+            "message": "Python ML dependencies are missing. Install requirements-ml.txt before training.",
+            "missing": [m["module"] for m in missing],
+            "installCommand": "pip install -r requirements-ml.txt",
+            "details": {"missingDependencies": missing},
+        }
 
     import numpy as np
     import joblib

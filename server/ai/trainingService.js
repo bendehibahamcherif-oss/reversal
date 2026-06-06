@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TRAIN_SCRIPT = path.join(__dirname, 'train_pipeline.py');
 const DEFAULT_TIMEOUT_MS = Number(process.env.ML_TRAIN_TIMEOUT_MS || 10 * 60 * 1000);
+const PYTHON_BIN = process.env.ML_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
 
 export const EXPECTED_DATASET_PATHS = [
   path.join(__dirname, 'data', 'features_snapshot.parquet'),
@@ -68,6 +69,23 @@ function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(filePath));
   return `sha256:${hash.digest('hex')}`;
+}
+
+async function checkPythonDeps() {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON_BIN, ['-c', 'import pandas, numpy, sklearn, joblib'], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      timeout: 8000,
+    });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('error', (err) => resolve({ ok: false, spawnError: err.message }));
+    proc.on('close', (code) => {
+      if (code === 0) return resolve({ ok: true });
+      const missing = ['pandas', 'numpy', 'sklearn', 'joblib'].filter((m) => stderr.includes(m) || stderr.includes('No module'));
+      resolve({ ok: false, missing: missing.length ? missing : ['pandas', 'numpy', 'sklearn', 'joblib'], stderr });
+    });
+  });
 }
 
 class TrainingService {
@@ -132,6 +150,20 @@ class TrainingService {
       return { ok: false, status: 'dataset_file_empty', message: 'Dataset file exists but is empty.', path: dataset };
     }
 
+    const depCheck = await checkPythonDeps();
+    if (!depCheck.ok) {
+      if (depCheck.spawnError) {
+        return { ok: false, status: 'training_failed', message: `Failed to start Python: ${depCheck.spawnError}. Ensure python3 is installed.` };
+      }
+      return {
+        ok: false,
+        status: 'python_dependency_missing',
+        message: 'Python ML dependencies are missing. Install requirements-ml.txt before training.',
+        missing: depCheck.missing,
+        installCommand: 'pip install -r requirements-ml.txt',
+      };
+    }
+
     const args = [
       TRAIN_SCRIPT,
       '--dataset', dataset,
@@ -148,7 +180,7 @@ class TrainingService {
       let stdout = '';
       let stderr = '';
       let settled = false;
-      const proc = spawn(process.env.PYTHON_BIN || 'python3', args, {
+      const proc = spawn(PYTHON_BIN, args, {
         cwd: REPO_ROOT,
         env: { ...process.env, ML_ARTIFACTS_DIR: ARTIFACTS_DIR },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -219,4 +251,4 @@ class TrainingService {
 }
 
 export const trainingService = new TrainingService();
-export { TrainingService, validateTrainRequest };
+export { TrainingService, validateTrainRequest, PYTHON_BIN };
