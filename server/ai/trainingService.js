@@ -71,7 +71,8 @@ function validateTrainRequest(body = {}) {
   const promote = body.promote === true;
   const datasetPath = body.datasetPath === undefined ? null : String(body.datasetPath);
   const datasetId = body.datasetId === undefined || body.datasetId === null ? null : String(body.datasetId);
-  return { ok: errors.length === 0, errors, symbol, timeframe, horizon, promote, datasetPath, datasetId };
+  const modelType = body.modelType === undefined || body.modelType === null ? 'XGBoost' : String(body.modelType);
+  return { ok: errors.length === 0, errors, symbol, timeframe, horizon, promote, datasetPath, datasetId, modelType };
 }
 
 function parseLastJson(stdout) {
@@ -291,6 +292,7 @@ class TrainingService {
       '--symbol', request.symbol,
       '--timeframe', request.timeframe,
       '--horizon', String(request.horizon),
+      '--model-type', request.modelType,
       '--output-dir', ARTIFACTS_DIR,
       '--cost-bps', String(body.costBps ?? 0),
       '--tau-up', String(body.tauUp ?? 0.001),
@@ -323,6 +325,7 @@ class TrainingService {
       metrics: result.metrics || {},
       artifactPath: result.artifactPath,
       artifactType: result.artifactType,
+      modelType: result.modelType || request.modelType,
       status: 'candidate',
     });
 

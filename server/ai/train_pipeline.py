@@ -168,6 +168,39 @@ def class_distribution(y) -> dict[str, int]:
     return {LABEL_MAP.get(int(k), str(k)): int(v) for k, v in zip(*__import__("numpy").unique(y, return_counts=True))}
 
 
+def make_logistic_regression():
+    from sklearn.linear_model import LogisticRegression
+
+    return LogisticRegression(
+        max_iter=1000,
+        solver="lbfgs",
+        class_weight="balanced",
+    )
+
+
+def model_fit_error(model_type: str, exc: Exception) -> dict[str, str]:
+    return {"modelType": model_type, "errorType": type(exc).__name__, "message": str(exc)}
+
+
+def normalize_model_type(model_type: str | None) -> str:
+    normalized = (model_type or "xgboost").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "xgb": "xgboost",
+        "xgboostclassifier": "xgboost",
+        "xgboost_classifier": "xgboost",
+        "logisticregression": "logistic_regression",
+        "logistic_regression": "logistic_regression",
+        "lr": "logistic_regression",
+        "histgradientboosting": "hist_gradient_boosting",
+        "hist_gradient_boosting": "hist_gradient_boosting",
+        "histgradientboostingclassifier": "hist_gradient_boosting",
+        "lightgbm": "lightgbm",
+        "lgbm": "lightgbm",
+        "lgbmclassifier": "lightgbm",
+    }
+    return aliases.get(normalized, "xgboost")
+
+
 def evaluate(model, x, y, labels: list[int]) -> dict[str, Any]:
     import numpy as np
     from sklearn.metrics import accuracy_score, brier_score_loss, confusion_matrix, f1_score, log_loss, roc_auc_score
@@ -221,7 +254,6 @@ def train(args) -> dict[str, Any]:
     import numpy as np
     import joblib
     from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import Pipeline
     from sklearn.preprocessing import StandardScaler
     from sklearn.impute import SimpleImputer
@@ -256,21 +288,98 @@ def train(args) -> dict[str, Any]:
     x_val, y_val = x[val_slice], y_arr[val_slice]
     x_test, y_test = x[test_slice], y_arr[test_slice]
     labels = [0, 1, 2]
+    requested_model_type = normalize_model_type(getattr(args, "model_type", None))
+    fit_errors: list[dict[str, str]] = []
+    warnings: list[str] = []
+    candidates: list[tuple[str, Any, dict[str, Any]]] = []
 
-    baseline = Pipeline([("imputer", SimpleImputer()), ("scaler", StandardScaler()), ("model", LogisticRegression(max_iter=1000, multi_class="auto"))])
-    baseline.fit(x_train, y_train)
-    candidates = [("logistic_regression", baseline, evaluate(baseline, x_val, y_val, labels))]
+    baseline_report: dict[str, Any] = {"status": "failed", "modelType": "logistic_regression", "error": None}
+    baseline = Pipeline([("imputer", SimpleImputer()), ("scaler", StandardScaler()), ("model", make_logistic_regression())])
+    try:
+        baseline.fit(x_train, y_train)
+        baseline_metrics = evaluate(baseline, x_val, y_val, labels)
+        candidates.append(("logistic_regression", baseline, baseline_metrics))
+        baseline_report = {"status": "trained", "modelType": "logistic_regression", "error": None}
+    except Exception as exc:
+        error = model_fit_error("logistic_regression", exc)
+        fit_errors.append(error)
+        warnings.append("baseline_failed")
+        baseline_report = {"status": "failed", "modelType": "logistic_regression", "error": error["message"]}
+
+    candidate_report: dict[str, Any] = {"status": "failed", "modelType": requested_model_type, "error": None}
+
+    def fit_candidate(model_type: str, model: Any) -> None:
+        nonlocal candidate_report
+        model.fit(x_train, y_train)
+        metrics = evaluate(model, x_val, y_val, labels)
+        candidates.append((model_type, model, metrics))
+        candidate_report = {"status": "trained", "modelType": model_type, "error": None}
 
     import importlib.util
-    if importlib.util.find_spec("xgboost") is not None:
-        from xgboost import XGBClassifier  # type: ignore
-        xgb = XGBClassifier(objective="multi:softprob", num_class=3, n_estimators=80, max_depth=3, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, eval_metric="mlogloss", random_state=42)
-        xgb.fit(x_train, y_train)
-        candidates.append(("xgboost", xgb, evaluate(xgb, x_val, y_val, labels)))
+    if requested_model_type == "logistic_regression":
+        candidate_report = dict(baseline_report)
+    elif requested_model_type == "xgboost":
+        try:
+            if importlib.util.find_spec("xgboost") is None:
+                raise ImportError("xgboost is not installed; falling back to hist_gradient_boosting")
+            from xgboost import XGBClassifier  # type: ignore
+            xgb = XGBClassifier(objective="multi:softprob", num_class=3, n_estimators=80, max_depth=3, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, eval_metric="mlogloss", random_state=42)
+            fit_candidate("xgboost", xgb)
+        except ImportError:
+            try:
+                hgb = Pipeline([("imputer", SimpleImputer()), ("model", HistGradientBoostingClassifier(max_iter=120, learning_rate=0.05, random_state=42))])
+                fit_candidate("hist_gradient_boosting", hgb)
+            except Exception as exc:
+                error = model_fit_error("hist_gradient_boosting", exc)
+                fit_errors.append(error)
+                warnings.append("candidate_failed")
+                candidate_report = {"status": "failed", "modelType": "hist_gradient_boosting", "error": error["message"]}
+        except Exception as exc:
+            error = model_fit_error("xgboost", exc)
+            fit_errors.append(error)
+            warnings.append("candidate_failed")
+            candidate_report = {"status": "failed", "modelType": "xgboost", "error": error["message"]}
+    elif requested_model_type == "lightgbm":
+        try:
+            if importlib.util.find_spec("lightgbm") is None:
+                raise ImportError("lightgbm is not installed; falling back to hist_gradient_boosting")
+            from lightgbm import LGBMClassifier  # type: ignore
+            lgbm = LGBMClassifier(objective="multiclass", num_class=3, n_estimators=120, learning_rate=0.05, random_state=42, class_weight="balanced", verbose=-1)
+            fit_candidate("lightgbm", lgbm)
+        except ImportError:
+            try:
+                hgb = Pipeline([("imputer", SimpleImputer()), ("model", HistGradientBoostingClassifier(max_iter=120, learning_rate=0.05, random_state=42))])
+                fit_candidate("hist_gradient_boosting", hgb)
+            except Exception as exc:
+                error = model_fit_error("hist_gradient_boosting", exc)
+                fit_errors.append(error)
+                warnings.append("candidate_failed")
+                candidate_report = {"status": "failed", "modelType": "hist_gradient_boosting", "error": error["message"]}
+        except Exception as exc:
+            error = model_fit_error("lightgbm", exc)
+            fit_errors.append(error)
+            warnings.append("candidate_failed")
+            candidate_report = {"status": "failed", "modelType": "lightgbm", "error": error["message"]}
     else:
-        hgb = Pipeline([("imputer", SimpleImputer()), ("model", HistGradientBoostingClassifier(max_iter=120, learning_rate=0.05, random_state=42))])
-        hgb.fit(x_train, y_train)
-        candidates.append(("hist_gradient_boosting", hgb, evaluate(hgb, x_val, y_val, labels)))
+        try:
+            hgb = Pipeline([("imputer", SimpleImputer()), ("model", HistGradientBoostingClassifier(max_iter=120, learning_rate=0.05, random_state=42))])
+            fit_candidate("hist_gradient_boosting", hgb)
+        except Exception as exc:
+            error = model_fit_error("hist_gradient_boosting", exc)
+            fit_errors.append(error)
+            warnings.append("candidate_failed")
+            candidate_report = {"status": "failed", "modelType": "hist_gradient_boosting", "error": error["message"]}
+
+    if not candidates:
+        return {
+            "ok": False,
+            "status": "training_failed",
+            "message": "All candidate models failed to train.",
+            "stage": "model_fit",
+            "errors": fit_errors,
+            "baseline": baseline_report,
+            "candidate": candidate_report,
+        }
 
     best_name, best_model, val_metrics = max(candidates, key=lambda item: (item[2].get("f1_macro") or 0, item[2].get("accuracy") or 0))
     test_metrics = evaluate(best_model, x_test, y_test, labels)
@@ -310,11 +419,14 @@ def train(args) -> dict[str, Any]:
     (artifact_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=json_default), encoding="utf-8")
     (artifact_dir / "metrics.json").write_text(json.dumps(test_metrics, indent=2, default=json_default), encoding="utf-8")
     (artifact_dir / "feature_schema.json").write_text(json.dumps(feature_schema, indent=2), encoding="utf-8")
-    report = {"split": split, "trainRows": len(x_train), "valRows": len(x_val), "testRows": len(x_test), "candidateValidationMetrics": {n: m for n, _, m in candidates}}
+    report = {"split": split, "trainRows": len(x_train), "valRows": len(x_val), "testRows": len(x_test), "baseline": baseline_report, "candidate": candidate_report, "candidateValidationMetrics": {n: m for n, _, m in candidates}, "errors": fit_errors}
     (artifact_dir / "train_report.json").write_text(json.dumps(report, indent=2, default=json_default), encoding="utf-8")
     (artifact_dir / "model_card.md").write_text(f"# Model Card — {model_id}\n\nModel type: {best_name}\nHorizon: {args.horizon}\nFeatures: {len(features)}\n", encoding="utf-8")
 
-    return {"ok": True, "status": "trained", "modelId": model_id, "createdAt": created_at, "artifactPath": str(artifact_dir), "artifactType": artifact_type, "metrics": test_metrics, "datasetHash": manifest["datasetHash"], "featureSchemaHash": manifest["featureSchemaHash"], "featureSchema": feature_schema}
+    result = {"ok": True, "status": "trained", "modelId": model_id, "createdAt": created_at, "artifactPath": str(artifact_dir), "artifactType": artifact_type, "modelType": best_name, "metrics": test_metrics, "datasetHash": manifest["datasetHash"], "featureSchemaHash": manifest["featureSchemaHash"], "featureSchema": feature_schema}
+    if warnings:
+        result["warnings"] = sorted(set(warnings))
+    return result
 
 
 def parse_args(argv: list[str] | None = None):
@@ -327,6 +439,7 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--tau-up", "--up-threshold", dest="tau_up", type=float, default=0.001)
     parser.add_argument("--tau-dn", "--down-threshold", dest="tau_dn", type=float, default=0.001)
     parser.add_argument("--output-dir", "--output", dest="output_dir", default=os.environ.get("ML_ARTIFACTS_DIR", "server/ai/artifacts"))
+    parser.add_argument("--model-type", "--model", dest="model_type", default="xgboost")
     return parser.parse_args(argv)
 
 

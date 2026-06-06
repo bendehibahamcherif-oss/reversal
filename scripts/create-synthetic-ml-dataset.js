@@ -3,8 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const output = path.resolve(process.argv[2] || 'server/ai/data/features_snapshot.csv');
-const symbol = process.argv[3] || 'SPY';
-const rows = Number(process.argv[4] || 240);
+const arg3 = process.argv[3];
+const arg4 = process.argv[4];
+const symbol = arg3 && Number.isNaN(Number(arg3)) ? arg3 : 'SPY';
+const rows = Number((arg3 && !Number.isNaN(Number(arg3)) ? arg3 : arg4) || 240);
 fs.mkdirSync(path.dirname(output), { recursive: true });
 
 const lines = ['timestamp,symbol,open,high,low,close,volume'];
