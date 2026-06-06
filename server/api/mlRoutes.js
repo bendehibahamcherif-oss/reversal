@@ -16,10 +16,9 @@
 
 import { Router }        from 'express';
 import { readFile }      from 'node:fs/promises';
-import { existsSync }    from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { getDataset }    from '../historical/historicalDataService.js';
+import { sanitizeJson } from '../historical/jsonSafety.js';
 
 import { pythonInference, InferenceWorkerError, InferenceTimeoutError }
                                                from './pythonInference.js';
@@ -227,29 +226,17 @@ mlRoutes.get('/model', async (_req, res) => {
 mlRoutes.post('/train', async (req, res) => {
   const body = { ...(req.body || {}) };
 
-  // Resolve datasetId → datasetPath before handing off to trainingService
-  if (body.datasetId && !body.datasetPath) {
-    const record = getDataset(String(body.datasetId));
-    if (!record) {
-      return res.status(404).json({ ok: false, error: 'dataset_not_found', code: 'DATASET_NOT_FOUND', datasetId: body.datasetId });
-    }
-    if (!existsSync(record.filePath)) {
-      return res.status(404).json({ ok: false, error: 'dataset_file_not_found', code: 'DATASET_FILE_MISSING', filePath: record.filePath });
-    }
-    body.datasetPath = record.filePath;
-  }
-
   try {
     const result = await trainingService.train(body);
-    return res.status(200).json(result);
+    return res.status(200).json(sanitizeJson(result));
   } catch (err) {
     log.error('train endpoint error', { error: err.message });
-    return res.status(500).json({
+    return res.status(500).json(sanitizeJson({
       ok: false,
       status: 'training_failed',
       message: 'Training failed before the worker returned a result.',
       details: { error: err.message },
-    });
+    }));
   }
 });
 
@@ -313,7 +300,7 @@ mlRoutes.get('/model-card', async (_req, res) => {
       });
     }
     log.error('model card read error', { error: err.message });
-    return res.status(500).json({ ok: false, error: 'Failed to read model card', code: 'MODEL_CARD_READ_ERROR' });
+    return res.status(500).json(sanitizeJson({ ok: false, error: 'Failed to read model card', code: 'MODEL_CARD_READ_ERROR' }));
   }
 });
 
@@ -331,7 +318,7 @@ mlRoutes.get('/schema', async (_req, res) => {
       return res.status(200).json({ ok: true, schema: null, message: 'Feature schema not available yet' });
     }
     log.error('feature schema read error', { error: err.message });
-    return res.status(500).json({ ok: false, error: 'Failed to read feature schema', code: 'SCHEMA_READ_ERROR' });
+    return res.status(500).json(sanitizeJson({ ok: false, error: 'Failed to read feature schema', code: 'SCHEMA_READ_ERROR' }));
   }
 });
 
@@ -410,7 +397,7 @@ mlRoutes.get('/feature-importance', async (req, res) => {
       });
     }
     log.error('feature-importance read error', { error: err.message });
-    return res.status(500).json({ ok: false, error: 'Failed to read feature importance', code: 'FEATURE_IMPORTANCE_ERROR' });
+    return res.status(500).json(sanitizeJson({ ok: false, error: 'Failed to read feature importance', code: 'FEATURE_IMPORTANCE_ERROR' }));
   }
 });
 

@@ -46,10 +46,15 @@ class BacktestEngine {
 
   // ── Standard backtest (existing API, backward-compatible) ─────────────────
 
-  runBacktest(symbol, strategyId, timeframe = '1m', config = {}) {
+  runBacktest(symbol, strategyId, timeframe = '1m', config = {}, providedCandles = null) {
     const normalized = String(symbol || '').toUpperCase();
     const strategies = strategyEngine.getStrategies(normalized);
     const warnings = [];
+
+    if (Array.isArray(providedCandles)) {
+      const candidate = strategies[strategies.length - 1] || { id: 'historical_dataset_default', name: 'Historical Dataset Default', symbol: normalized, direction: 'long' };
+      return this.runBacktestFromCandles(normalized, candidate, timeframe, config, providedCandles, { source: 'historical_dataset' });
+    }
 
     if (!strategies.length) {
       warnings.push('No strategy candidates available; run strategy generation first.');
@@ -96,6 +101,27 @@ class BacktestEngine {
     }
 
     const result = this.#buildResult(normalized, candidate, timeframe, trades, runWarnings, cfg, candleData);
+    this.#saveResult(normalized, result);
+    return result;
+  }
+
+
+  runBacktestFromCandles(symbol, candidate, timeframe = '1m', config = {}, candles = [], candleData = {}) {
+    const normalized = String(symbol || '').toUpperCase();
+    const cfg = mergeConfig(config);
+    const normalizedCandles = Array.isArray(candles) ? candles.map((c) => ({
+      ...c,
+      t: c.t ?? c.timestamp,
+      o: c.o ?? c.open,
+      h: c.h ?? c.high,
+      l: c.l ?? c.low,
+      c: c.c ?? c.close,
+      v: c.v ?? c.volume,
+    })) : [];
+    const warnings = [];
+    if (normalizedCandles.length < 2) warnings.push('Not enough historical candles available for requested dataset.');
+    const trades = normalizedCandles.length >= 2 ? this.simulateTrades(normalizedCandles, candidate, cfg) : [];
+    const result = this.#buildResult(normalized, candidate, timeframe, trades, warnings, cfg, { ...candleData, candles: normalizedCandles });
     this.#saveResult(normalized, result);
     return result;
   }

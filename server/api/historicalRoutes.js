@@ -7,6 +7,7 @@ import {
   deleteDataset,
   listProviderCapabilities,
 } from '../historical/historicalDataService.js';
+import { sanitizeJson } from '../historical/jsonSafety.js';
 
 const historicalRoutes = Router();
 
@@ -31,17 +32,31 @@ export function normalizeHistoricalDownloadSymbols(body = {}) {
 
   return values
     .map((value) => String(value ?? '').trim().toUpperCase())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function sendJson(res, statusCode, payload) {
+  return res.status(statusCode).json(sanitizeJson(payload));
 }
 
 function symbolRequired(res) {
-  return res.status(400).json(SYMBOL_REQUIRED_RESPONSE);
+  return sendJson(res, 400, SYMBOL_REQUIRED_RESPONSE);
+}
+
+function datasetNotFound(res, datasetId) {
+  return sendJson(res, 404, {
+    ok: false,
+    status: 'dataset_not_found',
+    message: 'Historical dataset not found.',
+    datasetId,
+  });
 }
 
 // GET /api/historical/providers
 // List all supported providers with their capability matrix.
 historicalRoutes.get('/providers', (_req, res) => {
-  return res.json({ ok: true, providers: listProviderCapabilities() });
+  return sendJson(res, 200, { ok: true, providers: listProviderCapabilities() });
 });
 
 // GET /api/historical/datasets
@@ -49,15 +64,15 @@ historicalRoutes.get('/providers', (_req, res) => {
 historicalRoutes.get('/datasets', (req, res) => {
   const { symbol, timeframe, provider, purpose } = req.query;
   const datasets = listDatasets({ symbol, timeframe, provider, purpose });
-  return res.json({ ok: true, datasets, count: datasets.length });
+  return sendJson(res, 200, { ok: true, datasets, count: datasets.length });
 });
 
 // GET /api/historical/datasets/:id
 // Get a single dataset record.
 historicalRoutes.get('/datasets/:id', (req, res) => {
   const dataset = getDataset(req.params.id);
-  if (!dataset) return res.status(404).json({ ok: false, error: 'dataset_not_found' });
-  return res.json({ ok: true, dataset });
+  if (!dataset) return datasetNotFound(res, req.params.id);
+  return sendJson(res, 200, { ok: true, dataset });
 });
 
 // GET /api/historical/datasets/:id/candles
@@ -66,13 +81,13 @@ historicalRoutes.get('/datasets/:id/candles', async (req, res) => {
   const result = await readDatasetCandlesAsync(req.params.id);
   if (!result.ok) {
     const status = result.error === 'dataset_not_found' ? 404 : 500;
-    return res.status(status).json({ ok: false, error: result.error });
+    return sendJson(res, status, { ok: false, status: result.error, error: result.error, datasetId: req.params.id });
   }
   const { candles, meta, dataset } = result;
   const limit  = req.query.limit  ? Math.min(50000, parseInt(req.query.limit, 10))  : candles.length;
   const offset = req.query.offset ? Math.max(0, parseInt(req.query.offset, 10)) : 0;
   const slice  = candles.slice(offset, offset + limit);
-  return res.json({ ok: true, candles: slice, count: slice.length, total: candles.length, meta, dataset });
+  return sendJson(res, 200, { ok: true, candles: slice, count: slice.length, total: candles.length, meta, dataset });
 });
 
 // POST /api/historical/download
@@ -98,12 +113,12 @@ historicalRoutes.post('/download', async (req, res) => {
 
   const VALID_PROVIDERS = ['yahoo', 'twelvedata', 'polygon', 'alphaVantage'];
   if (!VALID_PROVIDERS.includes(provider)) {
-    return res.status(400).json({ ok: false, error: `invalid_provider. Supported: ${VALID_PROVIDERS.join(', ')}` });
+    return sendJson(res, 400, { ok: false, status: 'invalid_provider', error: `invalid_provider. Supported: ${VALID_PROVIDERS.join(', ')}` });
   }
 
   const VALID_PURPOSES = ['general', 'ml', 'backtest', 'correlation'];
   if (!VALID_PURPOSES.includes(purpose)) {
-    return res.status(400).json({ ok: false, error: `invalid_purpose. Supported: ${VALID_PURPOSES.join(', ')}` });
+    return sendJson(res, 400, { ok: false, status: 'invalid_purpose', error: `invalid_purpose. Supported: ${VALID_PURPOSES.join(', ')}` });
   }
 
   try {
@@ -111,6 +126,7 @@ historicalRoutes.post('/download', async (req, res) => {
     for (const symbol of symbols) {
       const result = await downloadHistoricalDataset({
         symbol,
+        symbols: [symbol],
         timeframe,
         provider,
         startDate,
@@ -118,13 +134,14 @@ historicalRoutes.post('/download', async (req, res) => {
         limit,
         purpose,
         credentials,
+        session: req.body?.session || 'RTH',
       });
       results.push({ symbol, ...result });
     }
 
     const failed = results.find((result) => !result.ok);
     if (failed) {
-      return res.status(422).json({
+      return sendJson(res, 422, {
         ok: false,
         error: failed.error,
         status: failed.error,
@@ -140,7 +157,7 @@ historicalRoutes.post('/download', async (req, res) => {
     const skipped = results.reduce((total, result) => total + (result.skipped || 0), 0);
     const warnings = results.flatMap((result) => result.warnings ?? []);
 
-    return res.json({
+    return sendJson(res, 200, {
       ok:         true,
       symbols,
       dataset:    datasets[0] ?? null,
@@ -150,7 +167,7 @@ historicalRoutes.post('/download', async (req, res) => {
       warnings,
     });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
+    return sendJson(res, 500, { ok: false, status: 'historical_download_failed', error: err.message, message: err.message });
   }
 });
 
@@ -159,10 +176,10 @@ historicalRoutes.post('/download', async (req, res) => {
 historicalRoutes.delete('/datasets/:id', async (req, res) => {
   try {
     const result = await deleteDataset(req.params.id);
-    if (!result.ok) return res.status(404).json({ ok: false, error: result.error ?? 'dataset_not_found' });
-    return res.json({ ok: true, deleted: req.params.id });
+    if (!result.ok) return datasetNotFound(res, req.params.id);
+    return sendJson(res, 200, { ok: true, deleted: req.params.id });
   } catch (err) {
-    return res.status(500).json({ ok: false, error: err.message });
+    return sendJson(res, 500, { ok: false, status: 'historical_delete_failed', error: err.message, message: err.message });
   }
 });
 
@@ -170,7 +187,7 @@ historicalRoutes.delete('/datasets/:id', async (req, res) => {
 // Health check for the historical data service.
 historicalRoutes.get('/status', (_req, res) => {
   const datasets = listDatasets();
-  return res.json({
+  return sendJson(res, 200, {
     ok:           true,
     service:      'historical-data',
     datasetCount: datasets.length,

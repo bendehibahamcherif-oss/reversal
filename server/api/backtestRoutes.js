@@ -3,14 +3,15 @@ import { backtestEngine } from '../backtest/backtestEngine.js';
 import { backtestStore } from '../backtest/backtestStore.js';
 import { exportHtmlReport } from '../backtest/backtestReportExporter.js';
 import { strategyEngine } from '../strategies/strategyEngine.js';
-import { getDataset, readDatasetCandlesAsync } from '../historical/historicalDataService.js';
+import { readDatasetCandlesAsync } from '../historical/historicalDataService.js';
+import { sanitizeJson } from '../historical/jsonSafety.js';
 
 const backtestRoutes = Router();
 
 // ── Existing routes (backward-compat) ────────────────────────────────────────
 
-backtestRoutes.post('/run/:symbol', async (req, res) => {
-  const symbol    = String(req.params.symbol || '').toUpperCase();
+async function runBacktestHandler(req, res) {
+  const symbol    = String(req.params.symbol || req.body?.symbol || '').toUpperCase();
   const { strategyId, timeframe = '1m', config = {}, datasetId } = req.body || {};
 
   let dataSource = null;
@@ -18,15 +19,23 @@ backtestRoutes.post('/run/:symbol', async (req, res) => {
   if (datasetId) {
     const read = await readDatasetCandlesAsync(datasetId);
     if (!read.ok) {
-      return res.status(read.error === 'dataset_not_found' ? 404 : 500).json({ ok: false, error: read.error, datasetId });
+      const status = read.error === 'dataset_not_found' ? 404 : 200;
+      const message = read.error === 'dataset_not_found' ? 'Historical dataset not found.' : 'Historical dataset exists but no usable CSV/Parquet file was found.';
+      return res.status(status).json(sanitizeJson({ ok: false, status: read.error, error: read.error, message, datasetId }));
     }
     historicalCandles = read.candles;
-    dataSource = { datasetId, candleCount: historicalCandles.length, provider: read.dataset?.provider, timeframe: read.dataset?.timeframe };
+    dataSource = { type: 'historical_dataset', datasetId: read.dataset?.datasetId || datasetId, provider: read.dataset?.provider, rowCount: read.dataset?.rowCount ?? historicalCandles.length };
   }
 
   const result = backtestEngine.runBacktest(symbol, strategyId, timeframe, config, historicalCandles);
-  return res.json({ ok: true, symbol, result, dataSource });
-});
+  if (datasetId && (!Array.isArray(historicalCandles) || historicalCandles.length < 2)) {
+    return res.status(200).json(sanitizeJson({ ok: true, symbol, result, dataSource, status: 'not_enough_data', message: 'Not enough historical dataset rows for backtesting.' }));
+  }
+  return res.json(sanitizeJson({ ok: true, symbol, result, dataSource }));
+}
+
+backtestRoutes.post('/run/:symbol', runBacktestHandler);
+backtestRoutes.post('/run', runBacktestHandler);
 
 backtestRoutes.get('/results/:symbol', (req, res) => {
   const symbol = String(req.params.symbol || '').toUpperCase();
