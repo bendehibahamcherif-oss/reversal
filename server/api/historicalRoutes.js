@@ -6,6 +6,8 @@ import {
   getDataset,
   deleteDataset,
   listProviderCapabilities,
+  resolveDatasetForTraining,
+  diagnoseDataset,
 } from '../historical/historicalDataService.js';
 import { sanitizeJson } from '../historical/jsonSafety.js';
 
@@ -54,13 +56,11 @@ function datasetNotFound(res, datasetId) {
 }
 
 // GET /api/historical/providers
-// List all supported providers with their capability matrix.
 historicalRoutes.get('/providers', (_req, res) => {
   return sendJson(res, 200, { ok: true, providers: listProviderCapabilities() });
 });
 
 // GET /api/historical/datasets
-// List stored datasets. Query: symbol, timeframe, provider, purpose.
 historicalRoutes.get('/datasets', (req, res) => {
   const { symbol, timeframe, provider, purpose } = req.query;
   const datasets = listDatasets({ symbol, timeframe, provider, purpose });
@@ -68,15 +68,23 @@ historicalRoutes.get('/datasets', (req, res) => {
 });
 
 // GET /api/historical/datasets/:id
-// Get a single dataset record.
 historicalRoutes.get('/datasets/:id', (req, res) => {
   const dataset = getDataset(req.params.id);
   if (!dataset) return datasetNotFound(res, req.params.id);
   return sendJson(res, 200, { ok: true, dataset });
 });
 
+// GET /api/historical/datasets/:id/diagnostics
+// Full ML-readiness diagnostic for a dataset.
+historicalRoutes.get('/datasets/:id/diagnostics', (req, res) => {
+  const diag = diagnoseDataset(req.params.id);
+  if (!diag.registryFound) {
+    return sendJson(res, 404, { ...diag, ok: false });
+  }
+  return sendJson(res, 200, diag);
+});
+
 // GET /api/historical/datasets/:id/candles
-// Stream candles from a stored dataset.
 historicalRoutes.get('/datasets/:id/candles', async (req, res) => {
   const result = await readDatasetCandlesAsync(req.params.id);
   if (!result.ok) {
@@ -91,7 +99,6 @@ historicalRoutes.get('/datasets/:id/candles', async (req, res) => {
 });
 
 // POST /api/historical/download
-// Trigger historical data downloads.
 // Canonical body: { symbols, timeframe, provider, startDate, endDate, limit, purpose, credentials }
 // Backward compatibility: { symbol } is accepted and normalized to symbols: [symbol].
 historicalRoutes.post('/download', async (req, res) => {
@@ -172,7 +179,6 @@ historicalRoutes.post('/download', async (req, res) => {
 });
 
 // DELETE /api/historical/datasets/:id
-// Delete a dataset and its backing file.
 historicalRoutes.delete('/datasets/:id', async (req, res) => {
   try {
     const result = await deleteDataset(req.params.id);
@@ -184,13 +190,13 @@ historicalRoutes.delete('/datasets/:id', async (req, res) => {
 });
 
 // GET /api/historical/status
-// Health check for the historical data service.
 historicalRoutes.get('/status', (_req, res) => {
   const datasets = listDatasets();
   return sendJson(res, 200, {
     ok:           true,
     service:      'historical-data',
     datasetCount: datasets.length,
+    readyCount:   datasets.filter((d) => d.status === 'ready').length,
     providers:    listProviderCapabilities().map((p) => ({
       id:                  p.id,
       name:                p.name,
