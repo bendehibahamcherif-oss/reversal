@@ -144,3 +144,88 @@ def test_all_models_failed_error_output_includes_model_type_and_stage(tmp_path, 
     assert result["stage"] == "model_fit"
     assert result["errors"][0]["modelType"] == "logistic_regression"
     assert result["errors"][0]["errorType"] == "TypeError"
+
+
+def test_sanitize_for_json_converts_nan_inf_and_arrays():
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    payload = {
+        "nan": float("nan"),
+        "inf": float("inf"),
+        "np_nan": np.float64(np.nan),
+        "np_int": np.int64(7),
+        "matrix": np.array([[1, 2], [3, 4]]),
+        "timestamp": pd.Timestamp("2026-01-01T00:00:00Z"),
+    }
+
+    result = train_pipeline.sanitize_for_json(payload)
+
+    assert result["nan"] is None
+    assert result["inf"] is None
+    assert result["np_nan"] is None
+    assert result["np_int"] == 7
+    assert result["matrix"] == [[1, 2], [3, 4]]
+    assert result["timestamp"].startswith("2026-01-01T00:00:00")
+
+
+def test_parse_args_missing_required_returns_json_argparse_error():
+    with pytest.raises(train_pipeline.JsonArgparseError):
+        train_pipeline.parse_args(["--dataset", "missing.csv", "--symbol", "SPY"])
+
+
+def test_main_exception_json_failure_contains_traceback(monkeypatch):
+    def boom(_args):
+        raise RuntimeError("synthetic exception")
+
+    monkeypatch.setattr(train_pipeline, "train", boom)
+    with pytest.raises(RuntimeError) as exc_info:
+        train_pipeline.main(["--dataset", "missing.csv", "--symbol", "SPY", "--horizon", "10"])
+
+    failure = train_pipeline.json_failure(exc_info.value)
+    assert failure["ok"] is False
+    assert failure["status"] == "training_failed"
+    assert failure["errorType"] == "RuntimeError"
+    assert "synthetic exception" in failure["message"]
+    assert isinstance(failure["traceback"], str)
+
+
+def test_small_dataset_returns_structured_not_enough_data(tmp_path):
+    dataset = tmp_path / "small.csv"
+    _write_synthetic_csv(dataset, rows=10)
+
+    result = train_pipeline.train(_args(dataset, tmp_path / "artifacts", "LogisticRegression"))
+
+    assert result["ok"] is False
+    assert result["status"] == "not_enough_data"
+    assert result["stage"] == "dataset_validation"
+    assert result["details"]["rowCount"] == 10
+    assert "usableRows" in result["details"]
+
+
+def test_one_class_labels_return_not_enough_data(tmp_path):
+    _require_ml_deps()
+    dataset = tmp_path / "one_class.csv"
+    price = 100.0
+    with dataset.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["timestamp", "symbol", "open", "high", "low", "close", "volume"])
+        for i in range(140):
+            writer.writerow([
+                f"2026-01-01T00:{i % 60:02d}:00Z",
+                "SPY",
+                f"{price:.6f}",
+                f"{price + 0.1:.6f}",
+                f"{price - 0.1:.6f}",
+                f"{price:.6f}",
+                1000,
+            ])
+
+    args = _args(dataset, tmp_path / "artifacts", "LogisticRegression")
+    args.tau_up = 1.0
+    args.tau_dn = 1.0
+    result = train_pipeline.train(args)
+
+    assert result["ok"] is False
+    assert result["status"] == "not_enough_data"
+    assert result["stage"] == "label_or_split"
+    assert result["details"]["classDistribution"] == {"NEUTRAL": result["details"]["usableRows"]}
