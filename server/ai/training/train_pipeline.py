@@ -164,6 +164,8 @@ def train_pipeline(
 
     n_classes = len(LABEL_CLASSES)
 
+    # `multi_class` was removed in scikit-learn 1.7+; lbfgs handles multinomial
+    # automatically, so it is no longer passed explicitly.
     lr = LogisticRegression(
         max_iter=2000,
         solver="lbfgs",
