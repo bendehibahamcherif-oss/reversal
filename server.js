@@ -238,13 +238,44 @@ app.get('/auth/me', requireAuth, (req, res) => {
   });
 });
 
+app.get('/api/version', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'reversal-proxy',
+    version: '3.2-auth-fixed',
+    node: process.version,
+    uptimeSeconds: Math.round(process.uptime()),
+  });
+});
+
 app.use('/api', (req, res) => {
   res.status(404).json({
     ok: false,
-    status: 'not_found',
+    status: 'endpoint_not_found',
     error: 'API endpoint not found',
+    message: 'API endpoint not found.',
     endpoint: req.originalUrl || req.path,
   });
+});
+
+// Global JSON error handler — guarantees /api/* never falls through to Express's
+// default HTML error page. Must be registered after all routes (4-arg signature).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const isApi = (req.originalUrl || req.path || '').startsWith('/api');
+  const statusCode = Number(err?.statusCode || err?.status) || 500;
+  if (res.headersSent) return;
+  if (isApi) {
+    return res.status(statusCode).json({
+      ok: false,
+      status: err?.code || 'internal_error',
+      message: err?.message || 'Internal server error',
+      details: {},
+      endpoint: req.originalUrl || req.path,
+      method: req.method,
+    });
+  }
+  return res.status(statusCode).json({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error' });
 });
 
 await connectDatabase();

@@ -374,7 +374,8 @@ def train_pipeline(
     # ── 5. Logistic Regression (baseline) ───────────────────────────
     lr = LogisticRegression(
         max_iter=2000, solver="lbfgs",
-        multi_class="multinomial",
+        # multi_class removed — deprecated/removed in scikit-learn 1.7+;
+        # lbfgs solves multinomial automatically.
         class_weight="balanced",          # ← équilibrage classes
         C=1.0, random_state=seed,
     )
