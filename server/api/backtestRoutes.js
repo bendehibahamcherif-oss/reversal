@@ -57,17 +57,28 @@ backtestRoutes.delete('/results/:symbol', (req, res) => {
 // ── New routes ────────────────────────────────────────────────────────────────
 
 // Persistent run history (from SQLite)
-backtestRoutes.get('/runs/:symbol', (req, res) => {
-  const symbol = String(req.params.symbol || '').toUpperCase();
+backtestRoutes.get('/runs', (req, res) => {
+  const symbol = req.query.symbol ? String(req.query.symbol).toUpperCase() : null;
+  const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const runs   = backtestStore.getRuns(symbol || undefined, limit);
+  return res.json(sanitizeJson({ ok: true, symbol, runs, count: Array.isArray(runs) ? runs.length : 0 }));
+});
+
+backtestRoutes.get('/runs/:symbolOrRunId', (req, res) => {
+  const value = String(req.params.symbolOrRunId || '');
+  const run = backtestStore.getRunById(value);
+  if (run) return res.json(sanitizeJson({ ok: true, run }));
+
+  const symbol = value.toUpperCase();
   const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const runs   = backtestStore.getRuns(symbol, limit);
-  return res.json({ ok: true, symbol, runs });
+  return res.json(sanitizeJson({ ok: true, symbol, runs, count: Array.isArray(runs) ? runs.length : 0 }));
 });
 
 backtestRoutes.get('/runs/:symbol/:id', (req, res) => {
   const run = backtestStore.getRunById(req.params.id);
-  if (!run) return res.status(404).json({ ok: false, error: 'Run not found' });
-  return res.json({ ok: true, run });
+  if (!run) return res.status(404).json({ ok: false, status: 'run_not_found', message: 'Backtest run not found.', runId: req.params.id });
+  return res.json(sanitizeJson({ ok: true, run }));
 });
 
 // Walk-forward backtest
@@ -103,14 +114,14 @@ backtestRoutes.get('/monte-carlo/:symbol/:runId', (req, res) => {
   return res.json({ ok: true, runs });
 });
 
-// HTML export
+// HTML report export metadata. `/api/*` must remain JSON-only, so the generated
+// report is returned as a JSON string instead of an HTML response body.
 backtestRoutes.get('/export/:symbol/:runId', (req, res) => {
   const run = backtestStore.getRunById(req.params.runId);
-  if (!run) return res.status(404).json({ ok: false, error: 'Run not found' });
+  if (!run) return res.status(404).json({ ok: false, status: 'run_not_found', message: 'Backtest run not found.', runId: req.params.runId });
   const html = exportHtmlReport(run);
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="backtest-${run.symbol}-${run.timeframe}-${run.id.slice(0, 8)}.html"`);
-  return res.send(html);
+  const filename = `backtest-${run.symbol}-${run.timeframe}-${run.id.slice(0, 8)}.html`;
+  return res.json(sanitizeJson({ ok: true, status: 'available', filename, contentType: 'text/html; charset=utf-8', html }));
 });
 
 export default backtestRoutes;

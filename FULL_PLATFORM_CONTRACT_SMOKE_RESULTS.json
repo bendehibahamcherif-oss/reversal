@@ -1,0 +1,692 @@
+{
+  "ok": true,
+  "generatedAt": "2026-06-06T19:06:28.837Z",
+  "commands": {
+    "backend": {
+      "command": "/root/.nvm/versions/node/v20.20.2/bin/node scripts/full-backend-smoke.js",
+      "code": 0
+    },
+    "frontend": {
+      "command": "/root/.nvm/versions/node/v20.20.2/bin/node scripts/full-frontend-smoke.js",
+      "code": 0
+    }
+  },
+  "backend": {
+    "ok": true,
+    "baseUrl": "http://127.0.0.1:18095",
+    "generatedAt": "2026-06-06T19:06:28.636Z",
+    "summary": {
+      "total": 47,
+      "passed": 47,
+      "failed": 0
+    },
+    "results": [
+      {
+        "method": "GET",
+        "path": "/api/version",
+        "keys": [
+          "ok",
+          "version"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 12,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/dependencies",
+        "keys": [
+          "ok",
+          "status",
+          "dependencies"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 743,
+        "missingKeys": [],
+        "bodyStatus": "python_dependency_missing"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/health",
+        "keys": [
+          "ok",
+          "status",
+          "worker"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 7,
+        "missingKeys": [],
+        "bodyStatus": "available"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/model",
+        "keys": [
+          "ok",
+          "champion",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 7,
+        "missingKeys": [],
+        "bodyStatus": "no_model"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/model-runs",
+        "keys": [
+          "ok",
+          "runs"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": "empty"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/predictions",
+        "keys": [
+          "ok",
+          "predictions",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": "empty"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/feature-importance",
+        "keys": [
+          "ok",
+          "features",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": "no_model"
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/drift",
+        "keys": [
+          "ok",
+          "drift"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/ml/model-card",
+        "keys": [
+          "ok",
+          "modelCard",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "not_available"
+      },
+      {
+        "method": "POST",
+        "path": "/api/ml/train",
+        "body": {
+          "symbol": "SPY",
+          "timeframe": "1d",
+          "horizon": 10,
+          "modelType": "XGBoost",
+          "promote": false
+        },
+        "expectStatusAny": [
+          200,
+          400
+        ],
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 24,
+        "missingKeys": [],
+        "bodyStatus": "dataset_missing"
+      },
+      {
+        "method": "POST",
+        "path": "/api/ml/infer/SPY",
+        "body": {},
+        "expectStatusAny": [
+          200,
+          400,
+          422
+        ],
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": "no_champion_model"
+      },
+      {
+        "method": "POST",
+        "path": "/api/ml/promote/__smoke_missing_model__",
+        "expectStatusAny": [
+          200,
+          404
+        ],
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 404,
+        "ok": true,
+        "durationMs": 8,
+        "missingKeys": [],
+        "bodyStatus": "model_not_found"
+      },
+      {
+        "method": "GET",
+        "path": "/api/historical/providers",
+        "keys": [
+          "ok",
+          "providers"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/historical/datasets",
+        "keys": [
+          "ok",
+          "datasets"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/historical/datasets/__smoke_missing_dataset__",
+        "expectStatusAny": [
+          200,
+          404
+        ],
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 404,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": "dataset_not_found"
+      },
+      {
+        "method": "GET",
+        "path": "/api/historical/datasets/__smoke_missing_dataset__/diagnostics",
+        "expectStatusAny": [
+          200,
+          404
+        ],
+        "keys": [
+          "ok"
+        ],
+        "status": 404,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/historical/download",
+        "body": {
+          "symbols": [],
+          "provider": "yahoo",
+          "timeframe": "1d"
+        },
+        "expectStatus": 400,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 400,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": "symbol_required"
+      },
+      {
+        "method": "POST",
+        "path": "/api/historical/use-for-ml",
+        "body": {},
+        "expectStatus": 400,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 400,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "dataset_required"
+      },
+      {
+        "method": "POST",
+        "path": "/api/historical/use-for-backtest",
+        "body": {},
+        "expectStatus": 400,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 400,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "dataset_required"
+      },
+      {
+        "method": "POST",
+        "path": "/api/historical/use-for-correlation",
+        "body": {},
+        "expectStatus": 400,
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 400,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "dataset_required"
+      },
+      {
+        "method": "POST",
+        "path": "/api/backtest/run",
+        "body": {
+          "symbol": "SPY",
+          "datasetId": "__smoke_missing_dataset__"
+        },
+        "expectStatusAny": [
+          200,
+          404
+        ],
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 404,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "dataset_not_found"
+      },
+      {
+        "method": "GET",
+        "path": "/api/backtest/runs",
+        "keys": [
+          "ok",
+          "runs"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/backtest/runs/__smoke_missing_run__",
+        "keys": [
+          "ok",
+          "runs"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/macro/correlation?symbols=SPY,QQQ&window=20&timeframe=1d",
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "not_enough_data"
+      },
+      {
+        "method": "GET",
+        "path": "/api/macro/beta?asset=QQQ&benchmark=SPY&window=20",
+        "keys": [
+          "ok",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": "not_enough_data"
+      },
+      {
+        "method": "GET",
+        "path": "/api/macro/sector-rotation?window=20&timeframe=1d&benchmark=SPY",
+        "keys": [
+          "ok",
+          "sectors",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": "not_enough_data"
+      },
+      {
+        "method": "GET",
+        "path": "/api/macro/volatility-heatmap?symbols=SPY,QQQ&window=20&timeframe=1d",
+        "keys": [
+          "ok",
+          "symbols",
+          "heatmap",
+          "status"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": "not_enough_data"
+      },
+      {
+        "method": "GET",
+        "path": "/api/providers/health",
+        "keys": [
+          "providers"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 4,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/providers/credentials",
+        "keys": [
+          "ok",
+          "credentials"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/providers/active",
+        "keys": [
+          "activeProviders"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/feed/status",
+        "keys": [
+          "providers"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/feeds/tick/SPY",
+        "keys": [
+          "success"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 17053,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/feeds/candle/SPY",
+        "keys": [
+          "success"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 15979,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/feeds/orderbook/SPY",
+        "keys": [
+          "success"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/summary",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/positions",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/pnl",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/exposure",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/drawdown",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/portfolio/history",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": "no_history"
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/summary",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/limits",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/var",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/drawdown",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/exposure",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 2,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/risk/alerts",
+        "keys": [
+          "ok"
+        ],
+        "status": 200,
+        "ok": true,
+        "durationMs": 5,
+        "missingKeys": [],
+        "bodyStatus": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/__unknown__",
+        "expect404Json": true,
+        "keys": [
+          "ok",
+          "status",
+          "endpoint",
+          "method"
+        ],
+        "status": 404,
+        "ok": true,
+        "durationMs": 3,
+        "missingKeys": [],
+        "bodyStatus": "endpoint_not_found"
+      }
+    ]
+  },
+  "frontend": {
+    "ok": true,
+    "status": "frontend_repo_unavailable",
+    "frontendRepoAvailable": false,
+    "message": "No intraday-reversal-engine frontend repository is present in this checkout; source-level frontend smoke could not be executed here.",
+    "generatedAt": "2026-06-06T19:06:28.819Z",
+    "checkedCandidates": [
+      "intraday-reversal-engine",
+      "../intraday-reversal-engine",
+      "frontend"
+    ],
+    "results": []
+  }
+}
