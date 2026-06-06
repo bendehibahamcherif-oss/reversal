@@ -3,16 +3,29 @@ import { backtestEngine } from '../backtest/backtestEngine.js';
 import { backtestStore } from '../backtest/backtestStore.js';
 import { exportHtmlReport } from '../backtest/backtestReportExporter.js';
 import { strategyEngine } from '../strategies/strategyEngine.js';
+import { getDataset, readDatasetCandlesAsync } from '../historical/historicalDataService.js';
 
 const backtestRoutes = Router();
 
 // ── Existing routes (backward-compat) ────────────────────────────────────────
 
-backtestRoutes.post('/run/:symbol', (req, res) => {
+backtestRoutes.post('/run/:symbol', async (req, res) => {
   const symbol    = String(req.params.symbol || '').toUpperCase();
-  const { strategyId, timeframe = '1m', config = {} } = req.body || {};
-  const result = backtestEngine.runBacktest(symbol, strategyId, timeframe, config);
-  return res.json({ ok: true, symbol, result });
+  const { strategyId, timeframe = '1m', config = {}, datasetId } = req.body || {};
+
+  let dataSource = null;
+  let historicalCandles = null;
+  if (datasetId) {
+    const read = await readDatasetCandlesAsync(datasetId);
+    if (!read.ok) {
+      return res.status(read.error === 'dataset_not_found' ? 404 : 500).json({ ok: false, error: read.error, datasetId });
+    }
+    historicalCandles = read.candles;
+    dataSource = { datasetId, candleCount: historicalCandles.length, provider: read.dataset?.provider, timeframe: read.dataset?.timeframe };
+  }
+
+  const result = backtestEngine.runBacktest(symbol, strategyId, timeframe, config, historicalCandles);
+  return res.json({ ok: true, symbol, result, dataSource });
 });
 
 backtestRoutes.get('/results/:symbol', (req, res) => {
