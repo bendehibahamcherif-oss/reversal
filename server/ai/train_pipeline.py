@@ -10,8 +10,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
-from datetime import datetime, timezone
+import sys
+import traceback
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,22 +29,66 @@ P1_FEATURES = [
     "volume_zscore_20", "realized_vol_20", "ema9_spread", "ema20_spread", "vwap_spread",
 ]
 LABEL_MAP = {0: "SHORT", 1: "NEUTRAL", 2: "LONG"}
+CURRENT_STAGE = "startup"
+
+
+class JsonArgparseError(ValueError):
+    """Raised instead of argparse exiting with plain stderr and empty stdout."""
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise JsonArgparseError(message)
+
+
+def set_stage(stage: str) -> None:
+    global CURRENT_STAGE
+    CURRENT_STAGE = stage
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    if obj is None or isinstance(obj, (str, bool, int)):
+        return obj
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(sanitize_for_json(k)): sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [sanitize_for_json(v) for v in obj]
+    if hasattr(obj, "isoformat"):
+        try:
+            return obj.isoformat()
+        except Exception:
+            pass
+    if hasattr(obj, "item"):
+        try:
+            return sanitize_for_json(obj.item())
+        except Exception:
+            pass
+    if hasattr(obj, "tolist"):
+        try:
+            return sanitize_for_json(obj.tolist())
+        except Exception:
+            pass
+    return str(obj)
+
+
+def safe_json_default(value: Any) -> Any:
+    return sanitize_for_json(value)
 
 
 def emit(obj: dict[str, Any], exit_code: int = 0) -> None:
-    print(json.dumps(obj, default=json_default, sort_keys=True))
+    sanitized = sanitize_for_json(obj)
+    print(json.dumps(sanitized, default=safe_json_default, sort_keys=True, allow_nan=False))
     raise SystemExit(exit_code)
 
 
-def json_default(value: Any) -> Any:
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except Exception:
-            pass
-    if hasattr(value, "tolist"):
-        return value.tolist()
-    return str(value)
+# Backward-compatible name used by artifact writers in this module.
+json_default = safe_json_default
 
 
 def quick_row_count(path: Path) -> int | None:
@@ -229,17 +276,29 @@ def evaluate(model, x, y, labels: list[int]) -> dict[str, Any]:
     return metrics
 
 
+def not_enough_data(message: str, stage: str, row_count: int | None = None, usable_rows: int | None = None, class_dist: dict[str, int] | None = None, **details: Any) -> dict[str, Any]:
+    payload_details = {
+        "rowCount": row_count,
+        "usableRows": usable_rows,
+        "classDistribution": class_dist or {},
+        **details,
+    }
+    return {"ok": False, "status": "not_enough_data", "stage": stage, "message": message, "details": payload_details}
+
+
 def train(args) -> dict[str, Any]:
+    set_stage("dataset_validation")
     dataset = Path(args.dataset).resolve()
     if not dataset.exists() or dataset.stat().st_size == 0:
-        return {"ok": False, "status": "dataset_missing", "message": "Dataset snapshot does not exist or is empty."}
+        return {"ok": False, "status": "dataset_missing", "stage": "dataset_validation", "message": "Dataset snapshot does not exist or is empty.", "details": {"datasetPath": str(dataset)}}
 
     # Useful in dependency-light CI: tiny CSVs can return not_enough_data before importing pandas.
     row_count = quick_row_count(dataset)
     min_rows = max(80, args.horizon * 5)
     if row_count is not None and row_count < min_rows:
-        return {"ok": False, "status": "not_enough_data", "message": f"Need at least {min_rows} rows for horizon={args.horizon}; found {row_count}.", "details": {"rows": row_count, "minRows": min_rows}}
+        return not_enough_data(f"Need at least {min_rows} rows for horizon={args.horizon}; found {row_count}.", "dataset_validation", row_count=row_count, usable_rows=0, minRows=min_rows)
 
+    set_stage("dependency_imports")
     modules, missing = dependency_imports()
     if missing:
         return {
@@ -258,30 +317,35 @@ def train(args) -> dict[str, Any]:
     from sklearn.preprocessing import StandardScaler
     from sklearn.impute import SimpleImputer
 
+    set_stage("load_dataset")
     df = load_snapshot(dataset)
+    source_row_count = len(df)
     if args.symbol:
         df = df[df["symbol"] == args.symbol.upper()].reset_index(drop=True)
     if len(df) < min_rows:
-        return {"ok": False, "status": "not_enough_data", "message": f"Need at least {min_rows} usable rows for horizon={args.horizon}; found {len(df)}.", "details": {"rows": len(df), "minRows": min_rows}}
+        return not_enough_data(f"Need at least {min_rows} usable rows for horizon={args.horizon}; found {len(df)}.", "dataset_validation", row_count=source_row_count, usable_rows=len(df), minRows=min_rows)
 
+    set_stage("feature_engineering")
     df, features = ensure_features(df)
+    set_stage("label_or_split")
     y, _returns = make_labels(df, args.horizon, args.tau_up, args.tau_dn, args.cost_bps)
     df["y"] = y
     needed = features + ["y"]
     clean = df.replace([np.inf, -np.inf], np.nan).dropna(subset=needed).reset_index(drop=True)
     if len(clean) < min_rows:
-        return {"ok": False, "status": "not_enough_data", "message": "Not enough rows remain after labels/features are computed.", "details": {"rows": len(clean), "minRows": min_rows}}
+        return not_enough_data("Not enough rows or classes after labeling.", "label_or_split", row_count=source_row_count, usable_rows=len(clean), minRows=min_rows)
 
     y_arr = clean["y"].astype(int).to_numpy()
+    class_dist = class_distribution(y_arr)
     if len(set(y_arr.tolist())) < 2:
-        return {"ok": False, "status": "not_enough_data", "message": "Training requires at least two label classes.", "details": {"classDistribution": class_distribution(y_arr)}}
+        return not_enough_data("Not enough rows or classes after labeling.", "label_or_split", row_count=source_row_count, usable_rows=len(clean), class_dist=class_dist)
 
     split = chronological_split_indices(len(clean), args.horizon)
     train_slice = slice(*split["train"])
     val_slice = slice(*split["val"])
     test_slice = slice(*split["test"])
     if min(len(clean.iloc[train_slice]), len(clean.iloc[val_slice]), len(clean.iloc[test_slice])) < 5:
-        return {"ok": False, "status": "not_enough_data", "message": "Chronological train/val/test split is too small.", "details": {"rows": len(clean), "split": split}}
+        return not_enough_data("Not enough rows or classes after labeling.", "label_or_split", row_count=source_row_count, usable_rows=len(clean), class_dist=class_dist, split=split)
 
     x = clean[features].astype(float).to_numpy()
     x_train, y_train = x[train_slice], y_arr[train_slice]
@@ -383,7 +447,7 @@ def train(args) -> dict[str, Any]:
 
     best_name, best_model, val_metrics = max(candidates, key=lambda item: (item[2].get("f1_macro") or 0, item[2].get("accuracy") or 0))
     test_metrics = evaluate(best_model, x_test, y_test, labels)
-    test_metrics["class_distribution"] = class_distribution(y_arr)
+    test_metrics["class_distribution"] = class_dist
     test_metrics["validation"] = val_metrics
 
     created_at = datetime.now(timezone.utc).isoformat()
@@ -430,23 +494,44 @@ def train(args) -> dict[str, Any]:
 
 
 def parse_args(argv: list[str] | None = None):
-    parser = argparse.ArgumentParser()
+    set_stage("argparse")
+    parser = JsonArgumentParser()
     parser.add_argument("--dataset", "--data", dest="dataset", required=True)
-    parser.add_argument("--symbol", required=True)
+    parser.add_argument("--symbol", default="")
     parser.add_argument("--timeframe", default="1m")
-    parser.add_argument("--horizon", type=int, default=20)
+    parser.add_argument("--horizon", type=int, required=True)
     parser.add_argument("--cost-bps", type=float, default=0.0)
     parser.add_argument("--tau-up", "--up-threshold", dest="tau_up", type=float, default=0.001)
     parser.add_argument("--tau-dn", "--down-threshold", dest="tau_dn", type=float, default=0.001)
     parser.add_argument("--output-dir", "--output", dest="output_dir", default=os.environ.get("ML_ARTIFACTS_DIR", "server/ai/artifacts"))
     parser.add_argument("--model-type", "--model", dest="model_type", default="xgboost")
+    parser.add_argument("--promote", action="store_true", help="Accepted for Node compatibility; promotion is handled by Node.")
     return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> dict[str, Any]:
+    args = parse_args(argv)
+    return train(args)
+
+
+def json_failure(exc: Exception) -> dict[str, Any]:
+    status = "invalid_request" if isinstance(exc, JsonArgparseError) else "training_failed"
+    return {
+        "ok": False,
+        "status": status,
+        "stage": CURRENT_STAGE,
+        "message": str(exc),
+        "errorType": exc.__class__.__name__,
+        "traceback": traceback.format_exc()[-4000:],
+    }
 
 
 if __name__ == "__main__":
     try:
-        emit(train(parse_args()))
+        result = main(sys.argv[1:])
+        emit(result, 0 if result.get("ok") is True else 1)
     except SystemExit:
         raise
     except Exception as exc:
-        emit({"ok": False, "status": "training_failed", "message": str(exc), "details": {"type": type(exc).__name__}}, 1)
+        print(f"training pipeline failed at stage={CURRENT_STAGE}: {exc}", file=sys.stderr)
+        emit(json_failure(exc), 2 if isinstance(exc, JsonArgparseError) else 1)

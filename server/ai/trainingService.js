@@ -11,10 +11,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TRAIN_SCRIPT = path.join(__dirname, 'train_pipeline.py');
+const TRAIN_SCRIPT_DISPLAY = path.relative(REPO_ROOT, TRAIN_SCRIPT);
 const DEFAULT_TIMEOUT_MS = Number(process.env.ML_TRAIN_TIMEOUT_MS || 10 * 60 * 1000);
 
 export function getPythonBin() {
-  return process.env.ML_PYTHON_BIN || process.env.PYTHON_BIN || 'python3';
+  if (process.env.ML_PYTHON_BIN && process.env.ML_PYTHON_BIN !== 'undefined') return process.env.ML_PYTHON_BIN;
+  if (process.env.PYTHON_BIN && process.env.PYTHON_BIN !== 'undefined') return process.env.PYTHON_BIN;
+  return 'python3';
 }
 
 // Backward-compatible named export. Runtime probes and spawns call getPythonBin()
@@ -75,12 +78,57 @@ function validateTrainRequest(body = {}) {
   return { ok: errors.length === 0, errors, symbol, timeframe, horizon, promote, datasetPath, datasetId, modelType };
 }
 
-function parseLastJson(stdout) {
-  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+export function parseLastJson(stdout = '') {
+  const text = String(stdout || '').trim();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch {}
+
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     try { return JSON.parse(lines[i]); } catch {}
   }
+
+  for (let end = text.length - 1; end >= 0; end -= 1) {
+    if (text[end] !== '}') continue;
+    for (let start = text.lastIndexOf('{', end); start >= 0; start = text.lastIndexOf('{', start - 1)) {
+      try { return JSON.parse(text.slice(start, end + 1)); } catch {}
+    }
+  }
   return null;
+}
+
+function preview(value, maxChars) {
+  const redacted = String(value || '')
+    .replace(/(api[_-]?key|token|secret|password)(["'\s:=]+)([^"'\s,}]+)/gi, '$1$2[REDACTED]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, '$1[REDACTED]');
+  return redacted.length > maxChars ? redacted.slice(0, maxChars) : redacted;
+}
+
+function buildProcessDiagnostics(meta = {}, procResult = {}) {
+  return {
+    exitCode: procResult.exitCode ?? procResult.code ?? null,
+    signal: procResult.signal ?? null,
+    stdoutPreview: preview(procResult.stdout, 1000),
+    stderrPreview: preview(procResult.stderr, 2000),
+    pythonBin: meta.pythonBin || getPythonBin(),
+    command: meta.command || meta.pythonBin || getPythonBin(),
+    args: Array.isArray(meta.args) ? meta.args : [],
+    script: meta.script || TRAIN_SCRIPT_DISPLAY,
+    datasetId: meta.datasetId || null,
+    datasetPath: meta.datasetPath || null,
+    timeoutMs: meta.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    cwd: meta.cwd || REPO_ROOT,
+  };
+}
+
+function invalidJsonFailure(meta, procResult) {
+  return {
+    ok: false,
+    status: 'training_failed',
+    stage: 'python_json_parse',
+    message: 'Training pipeline did not return valid JSON.',
+    details: buildProcessDiagnostics(meta, procResult),
+  };
 }
 
 function hashFile(filePath) {
@@ -171,15 +219,26 @@ class TrainingService {
     return resolveDatasetPath(datasetPath);
   }
 
-  async runTrainingProcess(args) {
-    if (this.spawnTraining) return this.spawnTraining(args);
+  async runTrainingProcess(args, context = {}) {
+    const pythonBin = context.pythonBin || getPythonBin();
+    const meta = {
+      command: pythonBin,
+      args,
+      pythonBin,
+      script: args?.[0] ? path.relative(REPO_ROOT, args[0]) : TRAIN_SCRIPT_DISPLAY,
+      datasetId: context.datasetId || null,
+      datasetPath: context.datasetPath || null,
+      timeoutMs: context.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      cwd: context.cwd || REPO_ROOT,
+    };
+    if (this.spawnTraining) return this.spawnTraining(args, meta);
 
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let settled = false;
-      const proc = spawn(getPythonBin(), args, {
-        cwd: REPO_ROOT,
+      const proc = spawn(pythonBin, args, {
+        cwd: meta.cwd,
         env: { ...process.env, ML_ARTIFACTS_DIR: ARTIFACTS_DIR },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -187,26 +246,47 @@ class TrainingService {
         if (settled) return;
         settled = true;
         proc.kill('SIGKILL');
-        resolve({ ok: false, status: 'training_failed', message: 'Training timed out.', details: { timeoutMs: DEFAULT_TIMEOUT_MS, stdout, stderr } });
-      }, DEFAULT_TIMEOUT_MS);
+        resolve({
+          ok: false,
+          status: 'training_failed',
+          stage: 'python_timeout',
+          message: 'Training timed out.',
+          details: buildProcessDiagnostics(meta, { exitCode: null, signal: 'SIGKILL', stdout, stderr }),
+        });
+      }, meta.timeoutMs);
       proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
       proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
       proc.on('error', (err) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve({ ok: false, status: 'training_failed', message: `Failed to start Python training: ${err.message}`, details: { stderr } });
+        resolve({
+          ok: false,
+          status: 'training_failed',
+          stage: 'python_spawn',
+          message: `Failed to start Python training: ${err.message}`,
+          details: buildProcessDiagnostics(meta, { exitCode: null, signal: null, stdout, stderr: `${stderr}${err.stack || err.message}` }),
+        });
       });
-      proc.on('close', (code) => {
+      proc.on('close', (code, signal) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        const procResult = { exitCode: code, signal, stdout, stderr };
         const parsed = parseLastJson(stdout);
-        if (code !== 0) {
-          resolve(parsed && parsed.ok === false ? parsed : { ok: false, status: 'training_failed', message: 'Training process exited non-zero.', details: { code, stdout, stderr } });
+        if (!parsed) {
+          resolve(invalidJsonFailure(meta, procResult));
           return;
         }
-        resolve(parsed || { ok: false, status: 'training_failed', message: 'Training returned no JSON result.', details: { stdout, stderr } });
+        if (parsed.ok === false) {
+          resolve({ ...parsed, details: { ...(parsed.details || {}), process: buildProcessDiagnostics(meta, procResult) } });
+          return;
+        }
+        if (code !== 0) {
+          resolve({ ...parsed, ok: false, status: parsed.status || 'training_failed', details: { ...(parsed.details || {}), process: buildProcessDiagnostics(meta, procResult) } });
+          return;
+        }
+        resolve(parsed);
       });
     });
   }
@@ -299,7 +379,22 @@ class TrainingService {
       '--tau-dn', String(body.tauDn ?? body.tauDown ?? 0.001),
     ];
 
-    const result = await this.runTrainingProcess(args);
+    console.info('[ml-training] spawning python training', sanitizeJson({
+      command: getPythonBin(),
+      args,
+      datasetId: request.datasetId,
+      datasetPath: dataset,
+      cwd: REPO_ROOT,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    }));
+
+    const result = await this.runTrainingProcess(args, {
+      datasetId: request.datasetId,
+      datasetPath: dataset,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      cwd: REPO_ROOT,
+      pythonBin: getPythonBin(),
+    });
 
     if (!result.ok) {
       const failure = result.status === 'python_dependency_missing'

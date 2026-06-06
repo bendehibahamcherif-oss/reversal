@@ -342,3 +342,25 @@ test('POST /api/ml/train failure includes dependency diagnostics after dependenc
     assert.ok(body.missing.length > 0, 'python_dependency_missing must not have an empty missing list');
   }
 });
+
+test('TrainingService invalid stdout includes safe subprocess diagnostics', async () => {
+  const { TrainingService } = await import('../ai/trainingService.js');
+  const service = new TrainingService({
+    dependencyChecker: async ({ pythonBin }) => ({ ok: true, status: 'ready', python: { available: true, version: 'test' }, dependencies: {}, missing: [], pythonBin }),
+  });
+
+  const result = await service.runTrainingProcess([
+    '-c',
+    'import sys; print("not-json"); print("secret token=abc123 real error", file=sys.stderr); sys.exit(1)',
+  ], { datasetId: 'ds1', datasetPath: '/tmp/features.csv', timeoutMs: 5000, cwd: process.cwd(), pythonBin: 'python3' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'training_failed');
+  assert.equal(result.stage, 'python_json_parse');
+  assert.equal(result.message, 'Training pipeline did not return valid JSON.');
+  assert.equal(result.details.exitCode, 1);
+  assert.equal(result.details.datasetId, 'ds1');
+  assert.equal(result.details.datasetPath, '/tmp/features.csv');
+  assert.match(result.details.stdoutPreview, /not-json/);
+  assert.match(result.details.stderrPreview, /secret \[REDACTED\] real error/);
+});
