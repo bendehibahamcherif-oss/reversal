@@ -416,6 +416,8 @@ class FeedManager {
   ingestTick(tick) { const n = createNormalizedTick(tick); this.latestTicks.set(n.symbol, n); this.bumpStatus(n.source, n.symbol, n.timestamp); return n; }
   ingestCandle(c) { const n = createNormalizedCandle(c); this.latestCandles.set(`${n.symbol}:${n.timeframe}`, n); this.bumpStatus(n.source, n.symbol, n.timestamp); return n; }
   ingestOrderBook(b) { const n = createNormalizedOrderBook(b); this.latestOrderBooks.set(n.symbol, n); this.bumpStatus(n.source, n.symbol, n.timestamp); return n; }
+  getCachedTick(symbol) { return this.latestTicks.get(String(symbol || '').toUpperCase()) || null; }
+  getCachedCandle(symbol, timeframe = '1m') { return this.latestCandles.get(`${String(symbol || '').toUpperCase()}:${timeframe}`) || null; }
 
   async getLatestTick(symbol) {
     const sym = String(symbol || '').toUpperCase();

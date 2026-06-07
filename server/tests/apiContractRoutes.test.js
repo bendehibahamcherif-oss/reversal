@@ -62,7 +62,7 @@ test('sanitizeJson removes non-finite and unserializable values from API payload
     inf: null,
     when: '2026-06-06T00:00:00.000Z',
     big: '10',
-    self: null,
+    self: '[Circular]',
   });
   assert.doesNotThrow(() => JSON.stringify(safe));
 });

@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "skipped": true,
+  "generatedAt": "2026-06-07T00:31:37.949Z",
+  "reason": "API_BASE not provided",
+  "ciCommand": "API_BASE=https://reversal.onrender.com node scripts/production-api-contract-smoke.js"
+}

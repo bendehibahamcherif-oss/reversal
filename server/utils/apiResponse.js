@@ -20,12 +20,36 @@ export function sanitizeJson(value, seen = new WeakSet()) {
   if (t === 'function' || t === 'symbol') return null;
 
   if (value instanceof Date) return value.toISOString();
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+    return { type: 'Buffer', byteLength: value.length, base64: value.length <= 1024 ? value.toString('base64') : null };
+  }
+  if (value instanceof Map) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const out = {};
+    for (const [key, item] of value.entries()) {
+      const s = sanitizeJson(item, seen);
+      if (s !== undefined) out[String(key)] = s;
+    }
+    seen.delete(value);
+    return out;
+  }
+  if (value instanceof Set) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const out = Array.from(value.values()).map((item) => {
+      const s = sanitizeJson(item, seen);
+      return s === undefined ? null : s;
+    });
+    seen.delete(value);
+    return out;
+  }
   if (value instanceof Error) {
     return { name: value.name, message: value.message, ...(value.code ? { code: value.code } : {}) };
   }
 
   if (Array.isArray(value)) {
-    if (seen.has(value)) return null;
+    if (seen.has(value)) return '[Circular]';
     seen.add(value);
     const out = value.map((item) => {
       const s = sanitizeJson(item, seen);
@@ -36,7 +60,7 @@ export function sanitizeJson(value, seen = new WeakSet()) {
   }
 
   if (t === 'object') {
-    if (seen.has(value)) return null;
+    if (seen.has(value)) return '[Circular]';
     // Defer to a custom serializer if present (e.g. toJSON).
     if (typeof value.toJSON === 'function') {
       try { return sanitizeJson(value.toJSON(), seen); } catch { /* fall through */ }

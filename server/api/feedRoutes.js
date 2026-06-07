@@ -80,14 +80,16 @@ feedRoutes.delete('/providers/:provider/credentials', (req, res) => {
 // ── Live data ────────────────────────────────────────────────────────────────
 
 feedRoutes.get('/tick/:symbol', async (req, res) => {
-  const tick = await feedManager.getLatestTick(req.params.symbol);
-  return res.json({ success: true, ...(tick || {}), _raw: tick });
+  const live = req.query?.live === '1';
+  const tick = live ? await feedManager.getLatestTick(req.params.symbol) : feedManager.getCachedTick(req.params.symbol);
+  return res.json({ success: true, ok: true, status: tick ? 'available' : 'unavailable', mode: tick ? 'cached' : 'rest_fallback', reason: tick ? undefined : 'No cached tick is available; pass live=1 to request provider polling.', ...(tick || {}), _raw: tick });
 });
 
 feedRoutes.get('/candle/:symbol', async (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
-  const candle    = await feedManager.getLatestCandle(req.params.symbol, timeframe);
-  return res.json({ success: true, ...(candle || {}), _raw: candle });
+  const live = req.query?.live === '1';
+  const candle = live ? await feedManager.getLatestCandle(req.params.symbol, timeframe) : feedManager.getCachedCandle(req.params.symbol, timeframe);
+  return res.json({ success: true, ok: true, status: candle ? 'available' : 'unavailable', mode: candle ? 'cached' : 'rest_fallback', reason: candle ? undefined : 'No cached candle is available; pass live=1 to request provider polling.', ...(candle || {}), _raw: candle });
 });
 
 feedRoutes.get('/orderbook/:symbol', (req, res) => {

@@ -236,6 +236,10 @@ mlRoutes.post('/train', async (req, res) => {
     datasetPath: body.datasetPath ?? null,
   });
 
+  if (String(body.datasetId ?? '').trim().toLowerCase() === 'undefined' || String(body.datasetId ?? '').trim().toLowerCase() === 'null') {
+    return res.status(400).json({ ok: false, status: 'dataset_required', message: 'datasetId must be a real dataset id when provided.' });
+  }
+
   // Resolve datasetId → CSV path before handing off to trainingService.
   // train_pipeline.py requires .csv or .parquet — not .json.
   if (body.datasetId && !body.datasetPath) {

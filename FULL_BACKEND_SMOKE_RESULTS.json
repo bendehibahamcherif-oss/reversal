@@ -1,7 +1,7 @@
 {
   "ok": true,
   "baseUrl": "http://127.0.0.1:18095",
-  "generatedAt": "2026-06-06T19:06:28.636Z",
+  "generatedAt": "2026-06-07T00:31:20.618Z",
   "summary": {
     "total": 47,
     "passed": 47,
@@ -17,7 +17,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 12,
+      "durationMs": 10,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -31,7 +31,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 743,
+      "durationMs": 716,
       "missingKeys": [],
       "bodyStatus": "python_dependency_missing"
     },
@@ -45,7 +45,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 7,
+      "durationMs": 4,
       "missingKeys": [],
       "bodyStatus": "available"
     },
@@ -59,7 +59,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 7,
+      "durationMs": 5,
       "missingKeys": [],
       "bodyStatus": "no_model"
     },
@@ -72,7 +72,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 5,
+      "durationMs": 4,
       "missingKeys": [],
       "bodyStatus": "empty"
     },
@@ -100,7 +100,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 5,
+      "durationMs": 6,
       "missingKeys": [],
       "bodyStatus": "no_model"
     },
@@ -151,7 +151,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 24,
+      "durationMs": 21,
       "missingKeys": [],
       "bodyStatus": "dataset_missing"
     },
@@ -187,7 +187,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 8,
+      "durationMs": 6,
       "missingKeys": [],
       "bodyStatus": "model_not_found"
     },
@@ -213,7 +213,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -246,7 +246,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -295,7 +295,7 @@
       ],
       "status": 400,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "dataset_required"
     },
@@ -310,7 +310,7 @@
       ],
       "status": 400,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "dataset_required"
     },
@@ -331,7 +331,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "dataset_not_found"
     },
@@ -344,7 +344,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 5,
+      "durationMs": 6,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -357,7 +357,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -370,7 +370,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "not_enough_data"
     },
@@ -383,7 +383,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "not_enough_data"
     },
@@ -424,7 +424,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -437,7 +437,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -449,7 +449,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -461,7 +461,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -473,9 +473,9 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 17053,
+      "durationMs": 2,
       "missingKeys": [],
-      "bodyStatus": null
+      "bodyStatus": "unavailable"
     },
     {
       "method": "GET",
@@ -485,9 +485,9 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 15979,
+      "durationMs": 2,
       "missingKeys": [],
-      "bodyStatus": null
+      "bodyStatus": "unavailable"
     },
     {
       "method": "GET",
@@ -497,7 +497,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -509,7 +509,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -533,7 +533,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -545,7 +545,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -557,7 +557,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -569,7 +569,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "no_history"
     },
@@ -581,7 +581,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 4,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -605,7 +605,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -617,7 +617,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 5,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -641,7 +641,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 5,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -657,7 +657,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 4,
       "missingKeys": [],
       "bodyStatus": "endpoint_not_found"
     }

@@ -1,0 +1,1992 @@
+{
+  "ok": true,
+  "generatedAt": "2026-06-07T00:31:14.318Z",
+  "routeCount": 49,
+  "missingCount": 0,
+  "missing": [],
+  "routes": [
+    {
+      "Route": "/api/ml/dependencies",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDiagnostics",
+      "Risk": "dependency/runtime drift"
+    },
+    {
+      "Route": "/api/ml/health",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDiagnostics",
+      "Risk": "worker health"
+    },
+    {
+      "Route": "/api/ml/model",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "champion registry"
+    },
+    {
+      "Route": "/api/ml/model-runs",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "training registry"
+    },
+    {
+      "Route": "/api/ml/predictions",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "empty prediction state"
+    },
+    {
+      "Route": "/api/ml/feature-importance",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "model explainability"
+    },
+    {
+      "Route": "/api/ml/drift",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "drift empty state"
+    },
+    {
+      "Route": "/api/ml/model-card",
+      "Method": "GET",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLDashboard",
+      "Risk": "model card empty state"
+    },
+    {
+      "Route": "/api/ml/train",
+      "Method": "POST",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLTrainingPanel",
+      "Risk": "training lifecycle"
+    },
+    {
+      "Route": "/api/ml/promote/:modelId",
+      "Method": "POST",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLTrainingPanel",
+      "Risk": "promotion lifecycle"
+    },
+    {
+      "Route": "/api/ml/infer/:symbol",
+      "Method": "POST",
+      "Handler file": "server/api/mlRoutes.js",
+      "Mounted": true,
+      "Category": "ML",
+      "Expected consumer": "MLSignalPanel",
+      "Risk": "inference lifecycle"
+    },
+    {
+      "Route": "/api/historical/providers",
+      "Method": "GET",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "provider metadata"
+    },
+    {
+      "Route": "/api/historical/datasets",
+      "Method": "GET",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "dataset registry"
+    },
+    {
+      "Route": "/api/historical/datasets/:datasetId",
+      "Method": "GET",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "dataset lookup"
+    },
+    {
+      "Route": "/api/historical/datasets/:datasetId/diagnostics",
+      "Method": "GET",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "file diagnostics"
+    },
+    {
+      "Route": "/api/historical/download",
+      "Method": "POST",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "real data download"
+    },
+    {
+      "Route": "/api/historical/use-for-ml",
+      "Method": "POST",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "ML selection"
+    },
+    {
+      "Route": "/api/historical/use-for-backtest",
+      "Method": "POST",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "backtest selection"
+    },
+    {
+      "Route": "/api/historical/use-for-correlation",
+      "Method": "POST",
+      "Handler file": "server/api/historicalRoutes.js",
+      "Mounted": true,
+      "Category": "Historical",
+      "Expected consumer": "HistoricalDataPanel",
+      "Risk": "correlation selection"
+    },
+    {
+      "Route": "/api/backtest/run",
+      "Method": "POST",
+      "Handler file": "server/api/backtestRoutes.js",
+      "Mounted": true,
+      "Category": "Backtest",
+      "Expected consumer": "BacktestPanel",
+      "Risk": "dataset execution"
+    },
+    {
+      "Route": "/api/backtest/runs",
+      "Method": "GET",
+      "Handler file": "server/api/backtestRoutes.js",
+      "Mounted": true,
+      "Category": "Backtest",
+      "Expected consumer": "BacktestPanel",
+      "Risk": "run list"
+    },
+    {
+      "Route": "/api/backtest/runs/:runId",
+      "Method": "GET",
+      "Handler file": "server/api/backtestRoutes.js",
+      "Mounted": true,
+      "Category": "Backtest",
+      "Expected consumer": "BacktestPanel",
+      "Risk": "run details"
+    },
+    {
+      "Route": "/api/macro/correlation",
+      "Method": "GET",
+      "Handler file": "server/api/macroRoutes.js",
+      "Mounted": true,
+      "Category": "Macro",
+      "Expected consumer": "MacroPanel",
+      "Risk": "finite matrix"
+    },
+    {
+      "Route": "/api/macro/beta",
+      "Method": "GET",
+      "Handler file": "server/api/macroRoutes.js",
+      "Mounted": true,
+      "Category": "Macro",
+      "Expected consumer": "MacroPanel",
+      "Risk": "finite beta"
+    },
+    {
+      "Route": "/api/macro/sector-rotation",
+      "Method": "GET",
+      "Handler file": "server/api/macroRoutes.js",
+      "Mounted": true,
+      "Category": "Macro",
+      "Expected consumer": "MacroPanel",
+      "Risk": "safe empty state"
+    },
+    {
+      "Route": "/api/macro/volatility-heatmap",
+      "Method": "GET",
+      "Handler file": "server/api/macroRoutes.js",
+      "Mounted": true,
+      "Category": "Macro",
+      "Expected consumer": "MacroPanel",
+      "Risk": "safe empty state"
+    },
+    {
+      "Route": "/api/providers/health",
+      "Method": "GET",
+      "Handler file": "server/api/marketStreamRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "canonical provider health"
+    },
+    {
+      "Route": "/api/providers/credentials",
+      "Method": "GET",
+      "Handler file": "server/api/providerCredentialRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "credential mask"
+    },
+    {
+      "Route": "/api/providers/credentials/:providerId",
+      "Method": "POST",
+      "Handler file": "server/api/providerCredentialRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "credential save"
+    },
+    {
+      "Route": "/api/providers/credentials/:providerId",
+      "Method": "DELETE",
+      "Handler file": "server/api/providerCredentialRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "credential delete"
+    },
+    {
+      "Route": "/api/providers/active",
+      "Method": "GET",
+      "Handler file": "server/api/providerCredentialRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "active selection"
+    },
+    {
+      "Route": "/api/providers/active",
+      "Method": "POST",
+      "Handler file": "server/api/providerCredentialRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "ProviderSettings",
+      "Risk": "active save"
+    },
+    {
+      "Route": "/api/feed/status",
+      "Method": "GET",
+      "Handler file": "server/api/feedRoutes.js",
+      "Mounted": true,
+      "Category": "Providers",
+      "Expected consumer": "RealtimeStatus",
+      "Risk": "non-blocking health"
+    },
+    {
+      "Route": "/api/feeds/tick/:symbol",
+      "Method": "GET",
+      "Handler file": "server/api/feedRoutes.js",
+      "Mounted": true,
+      "Category": "Feeds",
+      "Expected consumer": "TickerTape",
+      "Risk": "latest tick"
+    },
+    {
+      "Route": "/api/feeds/candle/:symbol",
+      "Method": "GET",
+      "Handler file": "server/api/feedRoutes.js",
+      "Mounted": true,
+      "Category": "Feeds",
+      "Expected consumer": "ChartPanel",
+      "Risk": "latest candle"
+    },
+    {
+      "Route": "/api/feeds/orderbook/:symbol",
+      "Method": "GET",
+      "Handler file": "server/api/feedRoutes.js",
+      "Mounted": true,
+      "Category": "Feeds",
+      "Expected consumer": "OrderBookPanel",
+      "Risk": "safe empty book"
+    },
+    {
+      "Route": "/api/portfolio/summary",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "safe summary"
+    },
+    {
+      "Route": "/api/portfolio/positions",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "empty positions"
+    },
+    {
+      "Route": "/api/portfolio/pnl",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "zero PnL"
+    },
+    {
+      "Route": "/api/portfolio/exposure",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "zero exposure"
+    },
+    {
+      "Route": "/api/portfolio/drawdown",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "empty drawdown"
+    },
+    {
+      "Route": "/api/portfolio/history",
+      "Method": "GET",
+      "Handler file": "server/api/portfolioRoutes.js",
+      "Mounted": true,
+      "Category": "Portfolio",
+      "Expected consumer": "PortfolioPanel",
+      "Risk": "empty history"
+    },
+    {
+      "Route": "/api/risk/summary",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "safe summary"
+    },
+    {
+      "Route": "/api/risk/limits",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "nullable limits"
+    },
+    {
+      "Route": "/api/risk/var",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "nullable VaR"
+    },
+    {
+      "Route": "/api/risk/drawdown",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "safe drawdown"
+    },
+    {
+      "Route": "/api/risk/exposure",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "safe exposure"
+    },
+    {
+      "Route": "/api/risk/alerts",
+      "Method": "GET",
+      "Handler file": "server/api/riskRoutes.js",
+      "Mounted": true,
+      "Category": "Risk",
+      "Expected consumer": "RiskPanel",
+      "Risk": "empty alerts"
+    },
+    {
+      "Route": "/api/version",
+      "Method": "GET",
+      "Handler file": "server.js",
+      "Mounted": true,
+      "Category": "Version",
+      "Expected consumer": "Shell/App",
+      "Risk": "deployment version"
+    }
+  ],
+  "discovered": [
+    {
+      "method": "GET",
+      "route": "/api/providers/health",
+      "handlerFile": "server/api/marketStreamRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/runtime",
+      "handlerFile": "server/api/marketStreamRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/subscriptions",
+      "handlerFile": "server/api/marketStreamRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/subscribe",
+      "handlerFile": "server/api/marketStreamRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/market/subscribe/:symbol",
+      "handlerFile": "server/api/marketStreamRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/replay/candles/:symbol",
+      "handlerFile": "server/api/replayRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/replay-legacy/candles/:symbol",
+      "handlerFile": "server/api/replaySessionRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/replay-session/start",
+      "handlerFile": "server/api/replaySessionControlRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/replay-session/pause",
+      "handlerFile": "server/api/replaySessionControlRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/replay-session/resume",
+      "handlerFile": "server/api/replaySessionControlRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/replay-session/stop",
+      "handlerFile": "server/api/replaySessionControlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/alpha/signals/:symbol",
+      "handlerFile": "server/api/alphaRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/alpha/analyze/:symbol",
+      "handlerFile": "server/api/alphaRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/alpha/signals/:symbol",
+      "handlerFile": "server/api/alphaRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/patterns/signals/:symbol",
+      "handlerFile": "server/api/patternRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/patterns/analyze/:symbol",
+      "handlerFile": "server/api/patternRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/patterns/signals/:symbol",
+      "handlerFile": "server/api/patternRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/strategies/candidates/:symbol",
+      "handlerFile": "server/api/strategyRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategies/generate/:symbol",
+      "handlerFile": "server/api/strategyRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/strategies/candidates/:symbol",
+      "handlerFile": "server/api/strategyRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/quant/features/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/quant/extract/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/quant/pipeline/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/quant/pipeline/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/quant/history/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/quant/history/snapshot/:datasetId",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/quant/history/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/quant/features/:symbol",
+      "handlerFile": "server/api/quantRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/quality/scores/:symbol",
+      "handlerFile": "server/api/qualityRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/quality/score/:symbol",
+      "handlerFile": "server/api/qualityRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/quality/scores/:symbol",
+      "handlerFile": "server/api/qualityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/analytics/trend/:symbol",
+      "handlerFile": "server/api/analyticsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/analytics/compare/:symbol",
+      "handlerFile": "server/api/analyticsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/analytics/latest/:symbol",
+      "handlerFile": "server/api/analyticsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/backtest/run/:symbol",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/backtest/run",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/results/:symbol",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/results/:symbol/:datasetId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/backtest/results/:symbol",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/runs",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/runs/:runId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/runs/:symbol/:datasetId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/backtest/walk-forward/:symbol",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/walk-forward/:symbol",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/backtest/monte-carlo/:symbol/:runId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/monte-carlo/:symbol/:runId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/backtest/export/:symbol/:runId",
+      "handlerFile": "server/api/backtestRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/validation/strategy/:symbol",
+      "handlerFile": "server/api/validationRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/validation/results/:symbol",
+      "handlerFile": "server/api/validationRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/validation/results/:symbol/:datasetId",
+      "handlerFile": "server/api/validationRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/validation/results/:symbol",
+      "handlerFile": "server/api/validationRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/save/:symbol/:candidateId",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/save/:symbol",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/strategies/:symbol",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/strategy-lab/strategies/:symbol",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/strategy-lab/strategies",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/backtest/:datasetId",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/validation/:datasetId",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/strategy-lab/compare/:symbol",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/strategy-lab/strategy/:datasetId",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/strategy-lab/strategies/:symbol",
+      "handlerFile": "server/api/strategyLabRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/rules/sets/:symbol",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/rules/set/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/rules/set/:symbol",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "PUT",
+      "route": "/api/rules/set/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/rules/set/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/rules/sets/:symbol",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/rules/evaluate/:symbol/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/rules/convert/:symbol/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/rules/validate/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/rules/preview/:symbol/:datasetId",
+      "handlerFile": "server/api/ruleEngineRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/templates/strategies",
+      "handlerFile": "server/api/strategyTemplateRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/templates/strategies/:datasetId",
+      "handlerFile": "server/api/strategyTemplateRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/templates/strategies/:datasetId/create-rule-set",
+      "handlerFile": "server/api/strategyTemplateRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/session-context/:symbol",
+      "handlerFile": "server/api/sessionContextRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/session-context/compute/:symbol",
+      "handlerFile": "server/api/sessionContextRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/session-context/:symbol",
+      "handlerFile": "server/api/sessionContextRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/reversals/points/:symbol",
+      "handlerFile": "server/api/reversalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/reversals/detect/:symbol",
+      "handlerFile": "server/api/reversalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/reversals/strategy/:symbol/:reversalPointId",
+      "handlerFile": "server/api/reversalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/reversals/save-strategy/:symbol/:reversalPointId",
+      "handlerFile": "server/api/reversalRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/reversals/points/:symbol",
+      "handlerFile": "server/api/reversalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/paper/orders",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/paper/orders/:symbol?",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/paper/orders/:orderId",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/paper/fills/:symbol?",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/paper/positions",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/paper/positions/:symbol",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/paper/positions/:symbol/close",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/paper/risk/kill-switch",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/paper/risk/kill-switch",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/paper/risk/status",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/paper/reset",
+      "handlerFile": "server/api/paperTradingRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/status",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/status/:source",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/start",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/stop",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/providers",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/providers/:provider",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/feeds/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feeds/debug/yahoo/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/demo/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/demo/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feeds/demo/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/status",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/status/:source",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/start",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/stop",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/providers",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/providers/:provider",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/feed/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/feed/debug/yahoo/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/demo/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/demo/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/feed/demo/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/status",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/status/:source",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/start",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/stop",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/providers",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/providers/active",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/providers/:provider",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/market/providers/:provider/credentials",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/market/debug/yahoo/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/demo/tick/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/demo/candle/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/market/demo/orderbook/:symbol",
+      "handlerFile": "server/api/feedRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/candles/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/indicators/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/overlays/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/orderflow/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/payload/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/cvd/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/chart/footprint/:symbol",
+      "handlerFile": "server/api/chartRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/alerts",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/alerts",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/alerts/diagnostics",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/alerts/history",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/alerts/:datasetId",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "PUT",
+      "route": "/api/alerts/:datasetId",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/alerts/:datasetId",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/alerts/:datasetId/enable",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/alerts/:datasetId/disable",
+      "handlerFile": "server/api/alertRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/volume-profile/:symbol",
+      "handlerFile": "server/api/volumeProfileRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/features/save/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/features/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/features/record/:datasetId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/ai/features/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/labels/record/:datasetId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/labels/symbol/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/labels/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/ai/labels/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/regime/detect/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/regime/history/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/ai/regime/history/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/dataset/analyze/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/dataset/feature-importance/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/regime/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/analytics/analyze/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/analytics/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/analytics/features/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/analytics/regimes/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/ai/analytics/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/datasets/create",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/datasets/:datasetId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/datasets/:datasetId/split",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/training/start",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/training/status/:jobId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/models",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/models/:modelId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/champion/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/models/:modelId/promote",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/compare/:modelId1/:modelId2",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/inference/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/inference/:symbol",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/feature-importance/:modelId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ai/ml/drift/:modelId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ai/ml/drift/:modelId",
+      "handlerFile": "server/api/aiRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ml/infer/:symbol",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/health",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/model",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ml/train",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/predictions",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/training-runs",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/model-runs",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/ml/promote/:modelId",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/dataset/expected-paths",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/model-card",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/schema",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/signal/:symbol",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/feature-importance",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/drift",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/metrics",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/worker/status",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/ml/dependencies",
+      "handlerFile": "server/api/mlRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/credentials",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/providers/credentials",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/providers/credentials/:providerId",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/providers/credentials/:providerId",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/status",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/active",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/providers/active",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/runtime",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/debug-state",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/providers/health",
+      "handlerFile": "server/api/providerCredentialRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/positions",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/summary",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/drawdown",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/var",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/pnl",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/exposure",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/portfolio/history",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/portfolio/stress-test",
+      "handlerFile": "server/api/portfolioRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/summary",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/exposure",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/drawdown",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/var",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/limits",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/risk/alerts",
+      "handlerFile": "server/api/riskRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/status",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/risk",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/execution/risk/kill-switch",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/execution/risk/kill-switch",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/execution/orders",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/orders",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/orders/:orderId",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/execution/orders/:orderId",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/fills",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/execution/analytics",
+      "handlerFile": "server/api/executionRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/orders",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/orders/open",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/orders/:orderId",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/orders/:orderId/events",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/orders/:orderId/children",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders/:orderId/submit",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders/:orderId/acknowledge",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders/:orderId/fill",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/oms/orders/:orderId",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders/:orderId/reject",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/orders/:orderId/expire",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/oms/reconcile",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/reconcile/runs",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/events",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/oms/stats",
+      "handlerFile": "server/api/omsRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/correlation",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/beta",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/sector-rotation",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/volatility",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/volatility-heatmap",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/relative-performance",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/heatmap",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/multi-asset/sectors",
+      "handlerFile": "server/api/multiAssetRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/macro/correlation",
+      "handlerFile": "server/api/macroRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/macro/beta",
+      "handlerFile": "server/api/macroRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/macro/sector-rotation",
+      "handlerFile": "server/api/macroRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/macro/volatility-heatmap",
+      "handlerFile": "server/api/macroRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/institutional/sizing/volatility",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/institutional/sizing/kelly",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/institutional/scenarios/presets",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/institutional/scenarios",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/institutional/scenarios/:scenarioId",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/institutional/scenarios/run",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/institutional/scenarios/stress-pack/:packId",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/institutional/report/export",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/institutional/audit",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/institutional/audit/:auditId",
+      "handlerFile": "server/api/institutionalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/observability/health",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/observability/metrics",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/observability/metrics/reset",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/observability/market-session",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/observability/websocket-stats",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/observability/failover-drill",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/observability/rate-limit-status",
+      "handlerFile": "server/api/observabilityRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/providers",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/datasets",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/datasets/:datasetId",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/datasets/:datasetId/diagnostics",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/historical/use-for-ml",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/historical/use-for-backtest",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/historical/use-for-correlation",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/datasets/:datasetId/candles",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "POST",
+      "route": "/api/historical/download",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "DELETE",
+      "route": "/api/historical/datasets/:datasetId",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/historical/status",
+      "handlerFile": "server/api/historicalRoutes.js"
+    },
+    {
+      "method": "GET",
+      "route": "",
+      "handlerFile": "server.js"
+    },
+    {
+      "method": "GET",
+      "route": "/health",
+      "handlerFile": "server.js"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/register",
+      "handlerFile": "server.js"
+    },
+    {
+      "method": "POST",
+      "route": "/auth/login",
+      "handlerFile": "server.js"
+    },
+    {
+      "method": "GET",
+      "route": "/auth/me",
+      "handlerFile": "server.js"
+    },
+    {
+      "method": "GET",
+      "route": "/api/version",
+      "handlerFile": "server.js"
+    }
+  ]
+}
