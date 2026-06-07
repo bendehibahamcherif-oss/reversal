@@ -8,9 +8,10 @@
 
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
+import { DATA_DIR } from './server/utils/storagePaths.js';
 
-const DB_PATH = process.env.DB_PATH || '/var/data/reversal.db';
+const DB_PATH = process.env.DB_PATH || join(DATA_DIR, 'reversal.db');
 
 try {
   mkdirSync(dirname(DB_PATH), { recursive: true });

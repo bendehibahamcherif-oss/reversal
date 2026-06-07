@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createId, nowIso } from '../mlCore.js';
+import { DATA_DIR } from '../../utils/storagePaths.js';
 
-const DATA_DIR      = process.env.DATA_DIR || '/var/data';
 const REGISTRY_FILE = path.join(DATA_DIR, 'modelRegistry.json');
 const MODELS_DIR    = path.join(DATA_DIR, 'models');
 

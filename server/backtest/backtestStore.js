@@ -1,9 +1,8 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DATA_DIR, ensureDataDir } from '../utils/storagePaths.js';
 
-const DATA_DIR = process.env.DATA_DIR || '/var/data';
-mkdirSync(DATA_DIR, { recursive: true });
+ensureDataDir();
 const DB_PATH = join(DATA_DIR, 'reversal.db');
 
 let _db = null;

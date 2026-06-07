@@ -1,15 +1,15 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { DATA_DIR, ensureDataDir } from '../utils/storagePaths.js';
 
-const DATA_DIR = process.env.DATA_DIR || '/var/data';
 const DB_PATH  = path.join(DATA_DIR, 'reversal.db');
 
 let _db = null;
 
 function db() {
   if (_db) return _db;
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensureDataDir();
   _db = new Database(DB_PATH);
   _db.pragma('journal_mode = WAL');
   _db.exec(`

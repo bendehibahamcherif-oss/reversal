@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { dataPath } from '../utils/storagePaths.js';
 
-const STORE_FILE = '/var/data/alerts.json';
+const STORE_FILE = dataPath('alerts.json');
 
 export const VALID_TYPES = new Set([
   'price_above', 'price_below', 'price_cross',
