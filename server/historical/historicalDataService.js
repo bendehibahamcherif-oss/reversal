@@ -176,6 +176,25 @@ export async function downloadHistoricalDataset({
   };
 }
 
+
+function parseCsvCandles(raw) {
+  const lines = String(raw || '').trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length <= 1) return [];
+  const headers = lines[0].split(',').map((h) => h.trim());
+  return lines.slice(1).map((line) => {
+    const cols = line.split(',');
+    const row = {};
+    headers.forEach((header, index) => { row[header] = cols[index]; });
+    for (const key of ['open', 'high', 'low', 'close', 'volume']) {
+      if (row[key] !== undefined) {
+        const n = Number(row[key]);
+        row[key] = Number.isFinite(n) ? n : null;
+      }
+    }
+    return row;
+  }).filter((row) => row.timestamp && row.symbol);
+}
+
 /**
  * Read candles from a stored dataset file.
  */
@@ -186,7 +205,11 @@ export async function readDatasetCandlesAsync(datasetId) {
   if (!filePath || !existsSync(filePath)) return { ok: false, error: 'dataset_file_missing', datasetId, dataset: record };
 
   try {
-    const raw    = await readFile(filePath, 'utf-8');
+    const raw = await readFile(filePath, 'utf-8');
+    if (String(filePath).toLowerCase().endsWith('.csv')) {
+      const candles = parseCsvCandles(raw);
+      return { ok: true, candles, meta: { datasetId, sourceFormat: 'csv' }, dataset: record };
+    }
     const parsed = JSON.parse(raw);
     return { ok: true, candles: parsed.candles ?? [], meta: parsed.meta ?? {}, dataset: record };
   } catch (err) {

@@ -23,7 +23,8 @@ const SYMBOL_REQUIRED_RESPONSE = {
 };
 
 export function normalizeHistoricalDownloadSymbols(body = {}) {
-  const rawSymbols = Object.hasOwn(body, 'symbols') ? body.symbols : body.symbol;
+  const safeBody = body && typeof body === 'object' ? body : {};
+  const rawSymbols = Object.hasOwn(safeBody, 'symbols') ? safeBody.symbols : safeBody.symbol;
   const values = Array.isArray(rawSymbols)
     ? rawSymbols
     : typeof rawSymbols === 'string'
@@ -92,9 +93,14 @@ historicalRoutes.get('/datasets/:id/diagnostics', (req, res) => {
 //
 // Error priority: dataset_required → dataset_not_found → dataset_file_missing →
 // dataset_file_empty → (ml only) dataset_csv_missing.
+function isMissingId(value) {
+  const normalized = value == null ? '' : String(value).trim();
+  return !normalized || normalized.toLowerCase() === 'undefined' || normalized.toLowerCase() === 'null';
+}
+
 function useDatasetForTarget(target, req, res) {
   const datasetId = req.body?.datasetId == null ? '' : String(req.body.datasetId).trim();
-  if (!datasetId) {
+  if (isMissingId(req.body?.datasetId)) {
     return sendJson(res, 400, { ok: false, status: 'dataset_required', message: 'datasetId is required.', target });
   }
 
@@ -172,6 +178,19 @@ historicalRoutes.post('/download', async (req, res) => {
     return symbolRequired(res);
   }
 
+
+  const VALID_TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '1d'];
+  if (!VALID_TIMEFRAMES.includes(String(timeframe))) {
+    return sendJson(res, 400, { ok: false, status: 'invalid_payload', message: `Unsupported timeframe '${timeframe}'.`, field: 'timeframe' });
+  }
+  const validDate = (value) => !value || /^\d{4}-\d{2}-\d{2}$/.test(String(value));
+  if (!validDate(startDate) || !validDate(endDate)) {
+    return sendJson(res, 400, { ok: false, status: 'invalid_payload', message: 'startDate and endDate must use YYYY-MM-DD when provided.' });
+  }
+  if (provider === 'fallback_demo') {
+    return sendJson(res, 400, { ok: false, status: 'invalid_provider', message: 'fallback_demo cannot generate real historical datasets.' });
+  }
+
   const VALID_PROVIDERS = ['yahoo', 'twelvedata', 'polygon', 'alphaVantage'];
   if (!VALID_PROVIDERS.includes(provider)) {
     return sendJson(res, 400, { ok: false, status: 'invalid_provider', error: `invalid_provider. Supported: ${VALID_PROVIDERS.join(', ')}` });
@@ -221,6 +240,7 @@ historicalRoutes.post('/download', async (req, res) => {
     return sendJson(res, 200, {
       ok:         true,
       symbols,
+      datasetId:  datasets[0]?.datasetId ?? null,
       dataset:    datasets[0] ?? null,
       datasets,
       candleCount,

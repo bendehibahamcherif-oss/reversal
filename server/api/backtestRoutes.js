@@ -14,6 +14,13 @@ async function runBacktestHandler(req, res) {
   const symbol    = String(req.params.symbol || req.body?.symbol || '').toUpperCase();
   const { strategyId, timeframe = '1m', config = {}, datasetId } = req.body || {};
 
+  if (!datasetId || String(datasetId).trim().toLowerCase() === 'undefined' || String(datasetId).trim().toLowerCase() === 'null') {
+    return res.status(400).json(sanitizeJson({ ok: false, status: 'dataset_required', message: 'datasetId is required for production backtests.' }));
+  }
+  if (String(datasetId).trim() === 'fallback_demo') {
+    return res.status(400).json(sanitizeJson({ ok: false, status: 'dataset_not_usable_for_target', message: 'fallback_demo cannot be used as a real historical backtest dataset.', datasetId }));
+  }
+
   let dataSource = null;
   let historicalCandles = null;
   if (datasetId) {

@@ -4,7 +4,7 @@ import http from 'http';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { Server } from 'socket.io';
-import { sanitizeJson } from './server/utils/apiResponse.js';
+import { apiNotFoundHandler, jsonOnlyApiErrors } from './server/middleware/jsonOnlyApiErrors.js';
 
 import {
   alertsDB,
@@ -249,37 +249,8 @@ app.get('/api/version', (req, res) => {
   });
 });
 
-app.use('/api', (req, res) => {
-  res.status(404).json(sanitizeJson({
-    ok: false,
-    status: 'endpoint_not_found',
-    message: 'API endpoint not found.',
-    endpoint: req.originalUrl || req.path,
-    method: req.method,
-  }));
-});
-
-// Global JSON error handler — guarantees /api/* never falls through to Express's
-// default HTML error page. Must be registered after all routes (4-arg signature).
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
-  const isApi = (req.originalUrl || req.path || '').startsWith('/api');
-  const statusCode = Number(err?.statusCode || err?.status) || 500;
-  const requestId = req.traceId || req.headers?.['x-request-id'] || `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  if (res.headersSent) return;
-  if (isApi) {
-    return res.status(statusCode).json(sanitizeJson({
-      ok: false,
-      status: err?.code || 'internal_error',
-      message: err?.message || 'Internal server error',
-      details: err ? { error: err } : {},
-      endpoint: req.originalUrl || req.path,
-      method: req.method,
-      requestId,
-    }));
-  }
-  return res.status(statusCode).json(sanitizeJson({ ok: false, status: 'internal_error', message: err?.message || 'Internal server error', requestId }));
-});
+app.use('/api', apiNotFoundHandler);
+app.use(jsonOnlyApiErrors);
 
 await connectDatabase();
 
