@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { dataPath } from '../utils/storagePaths.js';
 
-const STORE_FILE = '/var/data/alertHistory.json';
+const STORE_FILE = dataPath('alertHistory.json');
 const MAX_HISTORY = 500;
 
 class AlertHistoryStore {

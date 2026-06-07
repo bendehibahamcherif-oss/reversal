@@ -12,8 +12,8 @@
 import { createId, nowIso } from '../mlCore.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { DATA_DIR } from '../../utils/storagePaths.js';
 
-const DATA_DIR    = process.env.DATA_DIR || '/var/data';
 const DRIFT_FILE  = path.join(DATA_DIR, 'drift_reports.json');
 const BINS        = 10;
 const PSI_WARNING = 0.10;
