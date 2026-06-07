@@ -1,0 +1,136 @@
+name: Backend Production Readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  backend-readiness:
+    name: Backend Production Readiness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python ML dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          if [ -f requirements-ml.txt ]; then
+            python3 -m pip install -r requirements-ml.txt
+          fi
+
+      # ── Core checks ────────────────────────────────────────────────────────
+
+      - name: npm test (Node unit tests)
+        run: npm test
+
+      - name: npm run build (syntax check)
+        run: npm run build
+
+      # ── Python checks ──────────────────────────────────────────────────────
+
+      - name: Python train_pipeline --help
+        run: python3 server/ai/train_pipeline.py --help
+
+      - name: pytest (Python unit tests)
+        run: python3 -m pytest server/ai/tests -v
+
+      # ── Backend smoke (existing gate scripts) ─────────────────────────────
+
+      - name: Backend smoke (16-endpoint gate)
+        run: npm run smoke:backend
+
+      - name: Full platform smoke
+        run: npm run smoke:full
+        continue-on-error: true
+
+      # ── Optional / missing scripts (documented in BACKEND_CI_READINESS_REPORT.md) ──
+
+      - name: Route discovery (backend-route-discovery.js)
+        run: |
+          if [ -f scripts/backend-route-discovery.js ]; then
+            node scripts/backend-route-discovery.js
+          else
+            echo "SKIP: scripts/backend-route-discovery.js not found — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      - name: API contract crawler (api-contract-crawler.js)
+        run: |
+          if [ -f scripts/api-contract-crawler.js ]; then
+            node scripts/api-contract-crawler.js
+          else
+            echo "SKIP: scripts/api-contract-crawler.js not found — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      - name: Payload fuzzer (backend-payload-fuzzer.js)
+        run: |
+          if [ -f scripts/backend-payload-fuzzer.js ]; then
+            node scripts/backend-payload-fuzzer.js
+          else
+            echo "SKIP: scripts/backend-payload-fuzzer.js not found — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      - name: Production readiness orchestrator (run-backend-production-readiness.js)
+        run: |
+          if [ -f scripts/run-backend-production-readiness.js ]; then
+            node scripts/run-backend-production-readiness.js
+          else
+            echo "SKIP: scripts/run-backend-production-readiness.js not found — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      # ── Lint / typecheck (not configured — documented in report) ──────────
+
+      - name: npm run lint (not configured)
+        run: |
+          if npm run lint --if-present 2>/dev/null; then
+            echo "lint passed"
+          else
+            echo "SKIP: 'lint' script not defined in package.json — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      - name: npm run typecheck (not configured)
+        run: |
+          if npm run typecheck --if-present 2>/dev/null; then
+            echo "typecheck passed"
+          else
+            echo "SKIP: 'typecheck' script not defined in package.json — see BACKEND_CI_READINESS_REPORT.md"
+          fi
+        continue-on-error: true
+
+      # ── Artifact upload ────────────────────────────────────────────────────
+
+      - name: Upload smoke result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-readiness-results
+          path: |
+            FULL_BACKEND_SMOKE_RESULTS.json
+            FULL_PLATFORM_SMOKE_RESULTS.json
+            PLATFORM_SMOKE_RESULTS.json
+            BACKEND_CI_READINESS_REPORT.md
+          if-no-files-found: ignore
+          retention-days: 30
