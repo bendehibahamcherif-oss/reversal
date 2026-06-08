@@ -1,7 +1,7 @@
 {
   "ok": true,
   "baseUrl": "http://127.0.0.1:18095",
-  "generatedAt": "2026-06-07T15:22:26.170Z",
+  "generatedAt": "2026-06-08T09:47:48.578Z",
   "summary": {
     "total": 47,
     "passed": 47,
@@ -17,7 +17,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 6,
+      "durationMs": 5,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -31,7 +31,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 109,
+      "durationMs": 29,
       "missingKeys": [],
       "bodyStatus": "ready"
     },
@@ -45,7 +45,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "available"
     },
@@ -59,7 +59,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "no_model"
     },
@@ -72,7 +72,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "empty"
     },
@@ -86,7 +86,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "empty"
     },
@@ -113,7 +113,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 4,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -127,7 +127,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "not_available"
     },
@@ -151,7 +151,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 15,
+      "durationMs": 9,
       "missingKeys": [],
       "bodyStatus": "dataset_missing"
     },
@@ -170,7 +170,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "no_champion_model"
     },
@@ -200,7 +200,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -213,7 +213,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 9,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -310,7 +310,7 @@
       ],
       "status": 400,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "dataset_required"
     },
@@ -344,7 +344,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -383,7 +383,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "not_enough_data"
     },
@@ -399,7 +399,7 @@
       "ok": true,
       "durationMs": 2,
       "missingKeys": [],
-      "bodyStatus": "not_enough_data"
+      "bodyStatus": "not_available"
     },
     {
       "method": "GET",
@@ -407,12 +407,12 @@
       "keys": [
         "ok",
         "symbols",
-        "heatmap",
+        "items",
         "status"
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "not_enough_data"
     },
@@ -424,7 +424,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -437,7 +437,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -449,7 +449,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -485,7 +485,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "unavailable"
     },
@@ -629,7 +629,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },

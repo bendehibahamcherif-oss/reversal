@@ -42,7 +42,7 @@ const endpoints = [
   { method: 'GET', path: '/api/macro/correlation?symbols=SPY,QQQ&window=20&timeframe=1d', keys: ['ok', 'status'] },
   { method: 'GET', path: '/api/macro/beta?asset=QQQ&benchmark=SPY&window=20', keys: ['ok', 'status'] },
   { method: 'GET', path: '/api/macro/sector-rotation?window=20&timeframe=1d&benchmark=SPY', keys: ['ok', 'sectors', 'status'] },
-  { method: 'GET', path: '/api/macro/volatility-heatmap?symbols=SPY,QQQ&window=20&timeframe=1d', keys: ['ok', 'symbols', 'heatmap', 'status'] },
+  { method: 'GET', path: '/api/macro/volatility-heatmap?symbols=SPY,QQQ&window=20&timeframe=1d', keys: ['ok', 'symbols', 'items', 'status'] },
 
   { method: 'GET', path: '/api/providers/health', keys: ['providers'] },
   { method: 'GET', path: '/api/providers/credentials', keys: ['ok', 'credentials'] },
