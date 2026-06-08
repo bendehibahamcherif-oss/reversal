@@ -7,9 +7,13 @@ server/persistence/secure/
 # Local and CI storage (runtime data; configure DATA_DIR in production)
 tmp/
 data/
+server/data/
+*.db
+*.db-shm
+*.db-wal
 
 # Python
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
