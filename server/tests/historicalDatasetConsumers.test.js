@@ -149,7 +149,7 @@ test('Correlation with overlapping datasetId resolves registry file', async () =
     { timestamp: 4, symbol: 'SPY', close: 266.2 },
   ]);
   const { body } = await request('/api/macro/correlation?datasetId=macro_overlap&symbols=NFLX,SPY&window=20');
-  assert.equal(body.status, 'ok');
+  assert.equal(body.status, 'ready');
   assert.equal(body.datasetId, 'macro_overlap');
   assert.deepEqual(body.matrix, [[1, 1], [1, 1]]);
 });
