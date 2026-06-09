@@ -17,3 +17,4 @@ server/data/
 *.py[cod]
 *.pyo
 .pytest_cache/
+.claude/
