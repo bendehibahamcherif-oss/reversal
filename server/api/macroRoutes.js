@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { readDatasetCandlesAsync } from '../historical/historicalDataService.js';
 import { sanitizeJson } from '../historical/jsonSafety.js';
+import { findCompatibleDatasetsForSymbols, loadCandlesFromMultipleDatasets } from '../services/dataRequirementService.js';
 
 const macroRoutes = Router();
 
@@ -23,6 +24,12 @@ function parseSymbols(raw) {
 function parseWindow(raw) {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function parseDatasetIds(raw) {
+  if (!raw) return null;
+  const ids = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+  return ids.length > 0 ? ids : null;
 }
 
 function closeOf(candle) {
@@ -176,33 +183,129 @@ function detectMissingSymbols(returnsBySymbol, requestedSymbols) {
   return { missing, available: requestedSymbols.filter((sym) => !missing.includes(sym)) };
 }
 
+/**
+ * Load candles for the requested symbols from one or more datasets.
+ * Supports three input modes:
+ *   a) explicit datasetIds array → load each dataset, merge candles
+ *   b) single datasetId → try primary, auto-resolve missing symbols via registry
+ *   c) no dataset → return "not_enough_data"
+ *
+ * Returns:
+ *   { done: true, response }  when a terminal HTTP response was already sent
+ *   { done: false, candles, datasetsBySymbol, resolution, stillMissing }
+ */
+async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res) {
+  const datasetsBySymbol = {};
+  let candles = [];
+  let resolution = 'single_dataset';
+
+  // ── Case A: explicit multi-dataset IDs ──────────────────────────────────────
+  if (datasetIds && datasetIds.length > 0) {
+    for (const dsId of datasetIds) {
+      const result = await readDatasetCandlesAsync(dsId);
+      if (!result.ok) continue;
+      for (const c of result.candles) {
+        const sym = String(c.symbol || '').toUpperCase();
+        if (symbols.includes(sym) && !datasetsBySymbol[sym]) {
+          datasetsBySymbol[sym] = dsId;
+        }
+      }
+      candles = candles.concat(result.candles);
+    }
+    resolution = datasetIds.length > 1 ? 'multi_dataset' : 'single_dataset';
+    if (candles.length === 0) {
+      return {
+        done: true,
+        response: res.status(200).json(sanitizeJson({
+          ok: false, status: 'dataset_not_found',
+          message: 'None of the specified datasets could be loaded.',
+          datasetIds,
+        })),
+      };
+    }
+    return { done: false, candles, datasetsBySymbol, resolution, stillMissing: [] };
+  }
+
+  // ── Case B: single datasetId with auto-resolution ────────────────────────────
+  if (primaryDatasetId) {
+    const primaryResult = await readDatasetCandlesAsync(primaryDatasetId);
+    if (!primaryResult.ok) {
+      const status = primaryResult.error === 'dataset_not_found' ? 404 : 200;
+      return {
+        done: true,
+        response: res.status(status).json(sanitizeJson({
+          ok: false,
+          status: primaryResult.error,
+          error: primaryResult.error,
+          message: primaryResult.error === 'dataset_not_found'
+            ? 'Historical dataset not found.'
+            : 'Historical dataset exists but no usable CSV/Parquet file was found.',
+          datasetId: primaryDatasetId,
+        })),
+      };
+    }
+
+    candles = primaryResult.candles;
+
+    // Which symbols are present in the primary dataset?
+    const primaryReturns = groupedReturns(candles, symbols);
+    const { missing, available } = detectMissingSymbols(primaryReturns, symbols);
+    for (const sym of available) datasetsBySymbol[sym] = primaryDatasetId;
+
+    if (missing.length === 0) {
+      return { done: false, candles, datasetsBySymbol, resolution: 'single_dataset', stillMissing: [] };
+    }
+
+    // Auto-resolve missing symbols from the registry
+    const { datasetsBySymbol: found, missingSymbols: stillMissing } =
+      findCompatibleDatasetsForSymbols({
+        symbols: missing,
+        timeframe: primaryResult.dataset?.timeframe,
+      });
+
+    if (Object.keys(found).length > 0) {
+      const { candles: extraCandles } = await loadCandlesFromMultipleDatasets(found);
+      candles = candles.concat(extraCandles);
+      Object.assign(datasetsBySymbol, found);
+      resolution = 'multi_dataset';
+    }
+
+    return { done: false, candles, datasetsBySymbol, resolution, stillMissing: stillMissing || [] };
+  }
+
+  // ── Case C: no dataset ────────────────────────────────────────────────────────
+  return { done: false, candles: [], datasetsBySymbol: {}, resolution: 'none', stillMissing: symbols };
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 macroRoutes.get('/correlation', async (req, res) => {
-  const datasetId = req.query.datasetId ? String(req.query.datasetId) : null;
-  const symbols   = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'DIA', 'TLT', 'GLD'];
-  const timeframe = req.query.timeframe || '1d';
-  const window    = parseWindow(req.query.window) ?? 20;
+  const datasetId  = req.query.datasetId  ? String(req.query.datasetId)  : null;
+  const datasetIds = parseDatasetIds(req.query.datasetIds);
+  const symbols    = parseSymbols(req.query.symbols) || ['SPY', 'QQQ', 'IWM', 'DIA', 'TLT', 'GLD'];
+  const timeframe  = req.query.timeframe || '1d';
+  const window     = parseWindow(req.query.window) ?? 20;
 
-  if (!datasetId) {
+  if (!datasetId && !datasetIds) {
     return res.status(200).json({ ok: true, symbols, matrix: [], observations: 0, timeframe, window, status: 'not_enough_data', message: 'Select a dataset to compute correlation.' });
   }
 
-  const loaded = await datasetCandlesResponse(datasetId, res);
+  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res);
   if (loaded.done) return loaded.response;
 
   const returns = groupedReturns(loaded.candles, symbols);
-
   const { missing, available } = detectMissingSymbols(returns, symbols);
+
   if (missing.length > 0) {
     return res.status(200).json(sanitizeJson({
       ok: false,
       status: 'missing_symbols',
-      message: `Dataset does not contain all requested symbols.`,
+      message: `No compatible dataset found for: ${missing.join(', ')}.`,
       datasetId,
       requestedSymbols: symbols,
       availableSymbols: available,
-      missingSymbols:   missing,
+      missingSymbols: missing,
+      action: 'create_dataset',
     }));
   }
 
@@ -216,7 +319,12 @@ macroRoutes.get('/correlation', async (req, res) => {
     : 0;
 
   if (observations < 2) {
-    return res.status(200).json(sanitizeJson({ ok: true, datasetId, symbols, matrix: [], observations, timeframe, window, status: 'not_enough_data', message: 'Not enough overlapping observations.' }));
+    return res.status(200).json(sanitizeJson({
+      ok: true, datasetId, datasetIds, symbols, matrix: [], observations, timeframe, window,
+      status: 'not_enough_data', message: 'Not enough overlapping observations.',
+      resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
+      overlapStart: null, overlapEnd: null, requiredRows: window,
+    }));
   }
 
   const pairs = [];
@@ -227,35 +335,41 @@ macroRoutes.get('/correlation', async (req, res) => {
     }
   }
 
-  return res.status(200).json(sanitizeJson({ ok: true, datasetId, symbols, matrix, pairs, observations, timeframe, window, status: 'ready' }));
+  return res.status(200).json(sanitizeJson({
+    ok: true, datasetId, symbols, matrix, pairs, observations, timeframe, window,
+    status: 'ready', resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
+  }));
 });
 
 macroRoutes.get('/beta', async (req, res) => {
-  const datasetId = req.query.datasetId ? String(req.query.datasetId) : null;
-  const asset     = String(req.query.asset || req.query.symbol || 'QQQ').toUpperCase();
-  const benchmark = String(req.query.benchmark || 'SPY').toUpperCase();
-  const timeframe = req.query.timeframe || '1d';
-  const window    = parseWindow(req.query.window) ?? 20;
+  const datasetId  = req.query.datasetId  ? String(req.query.datasetId)  : null;
+  const datasetIds = parseDatasetIds(req.query.datasetIds);
+  const asset      = String(req.query.asset || req.query.symbol || 'QQQ').toUpperCase();
+  const benchmark  = String(req.query.benchmark || 'SPY').toUpperCase();
+  const timeframe  = req.query.timeframe || '1d';
+  const window     = parseWindow(req.query.window) ?? 20;
+  const symbols    = [asset, benchmark];
 
-  if (!datasetId) {
+  if (!datasetId && !datasetIds) {
     return res.status(200).json({ ok: true, asset, benchmark, beta: null, r2: null, observations: 0, timeframe, window, status: 'not_enough_data', message: 'Select a dataset to compute beta.' });
   }
 
-  const loaded = await datasetCandlesResponse(datasetId, res);
+  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res);
   if (loaded.done) return loaded.response;
 
-  const returns = groupedReturns(loaded.candles, [asset, benchmark]);
+  const returns = groupedReturns(loaded.candles, symbols);
+  const { missing, available } = detectMissingSymbols(returns, symbols);
 
-  const { missing, available } = detectMissingSymbols(returns, [asset, benchmark]);
   if (missing.length > 0) {
     return res.status(200).json(sanitizeJson({
       ok: false,
       status: 'missing_symbols',
-      message: `Dataset does not contain all required symbols.`,
+      message: `No compatible dataset found for: ${missing.join(', ')}.`,
       datasetId,
-      requestedSymbols: [asset, benchmark],
+      requestedSymbols: symbols,
       availableSymbols: available,
-      missingSymbols:   missing,
+      missingSymbols: missing,
+      action: 'create_dataset',
     }));
   }
 
@@ -263,10 +377,19 @@ macroRoutes.get('/beta', async (req, res) => {
   const { beta, r2 } = betaFromPairs(pairs);
 
   if (pairs.length < 2 || beta === null || r2 === null) {
-    return res.status(200).json(sanitizeJson({ ok: true, datasetId, asset, benchmark, beta: null, r2: null, observations: pairs.length, timeframe, window, status: 'not_enough_data', message: 'Not enough overlapping observations.' }));
+    return res.status(200).json(sanitizeJson({
+      ok: true, datasetId, asset, benchmark, beta: null, r2: null,
+      observations: pairs.length, timeframe, window, status: 'not_enough_data',
+      message: 'Not enough overlapping observations.',
+      resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
+    }));
   }
 
-  return res.status(200).json(sanitizeJson({ ok: true, datasetId, asset, benchmark, beta, r2, observations: pairs.length, timeframe, window, status: 'ready' }));
+  return res.status(200).json(sanitizeJson({
+    ok: true, datasetId, asset, benchmark, beta, r2,
+    observations: pairs.length, timeframe, window, status: 'ready',
+    resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
+  }));
 });
 
 macroRoutes.get('/sector-rotation', (req, res) => {

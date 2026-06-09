@@ -45,6 +45,21 @@ function writeSpyOnlyCsv(dir) {
   return csvPath;
 }
 
+/** Write a single-symbol CSV fixture: only NFLX. */
+function writeNflxOnlyCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 500;
+  for (let i = 0; i < 60; i++) {
+    const drift = Math.cos(i / 3) * 3;
+    const ts = 1700000000000 + i * 86400000;
+    price = Math.max(200, price + drift);
+    rows.push(`${ts},NFLX,${price.toFixed(2)},${(price+2).toFixed(2)},${(price-2).toFixed(2)},${price.toFixed(2)},500000`);
+  }
+  const csvPath = join(dir, 'nflx_only.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
 /**
  * Write a 4-row CSV (2 rows per symbol, 2 different timestamps).
  * Each symbol gets 1 return, aligned → 1 pair total.
@@ -92,6 +107,34 @@ function patchRegistry(datasetId, csvPath) {
   });
 }
 
+/**
+ * Patch the registry with a record that includes explicit symbol metadata,
+ * so that findCompatibleDatasetsForSymbols can discover it during auto-resolution.
+ */
+async function patchRegistryWithSymbol(datasetId, csvPath, symbol) {
+  return import('../historical/historicalDatasetRegistry.js').then(({ historicalDatasetRegistry }) => {
+    const registry = historicalDatasetRegistry;
+    const record = {
+      datasetId, id: datasetId,
+      symbol: symbol || '',
+      symbols: symbol ? [symbol.toUpperCase()] : [],
+      timeframe: '1d',
+      provider: 'yahoo',
+      status: 'ready',
+      rowCount: 60,
+      files: { csv: csvPath, json: null, parquet: null },
+      filePath: csvPath,
+    };
+    if (typeof registry.saveDataset === 'function') {
+      registry.saveDataset(record);
+    } else {
+      const origGet = registry.get.bind(registry);
+      registry.get = (id) => (id === datasetId ? record : origGet(id));
+    }
+    return record;
+  });
+}
+
 // ── Test setup ────────────────────────────────────────────────────────────────
 
 let baseUrl;
@@ -103,19 +146,22 @@ before(async () => {
   tmpDir = makeTmpDir();
   mkdirSync(tmpDir, { recursive: true });
 
-  const twoSymCsv  = writeTwoSymbolCsv(tmpDir);
-  const spyOnlyCsv = writeSpyOnlyCsv(tmpDir);
-  const tinyCsv    = writeTinyTwoSymbolCsv(tmpDir);
+  const twoSymCsv   = writeTwoSymbolCsv(tmpDir);
+  const spyOnlyCsv  = writeSpyOnlyCsv(tmpDir);
+  const nflxOnlyCsv = writeNflxOnlyCsv(tmpDir);
+  const tinyCsv     = writeTinyTwoSymbolCsv(tmpDir);
 
   ids = {
     twoSymbol: 'macro_test_two_symbol',
     spyOnly:   'macro_test_spy_only',
+    nflxOnly:  'macro_test_nflx_only',
     tiny:      'macro_test_tiny',
   };
 
   await Promise.all([
     patchRegistry(ids.twoSymbol, twoSymCsv),
-    patchRegistry(ids.spyOnly,   spyOnlyCsv),
+    patchRegistryWithSymbol(ids.spyOnly,  spyOnlyCsv,  'SPY'),
+    patchRegistryWithSymbol(ids.nflxOnly, nflxOnlyCsv, 'NFLX'),
     patchRegistry(ids.tiny,      tinyCsv),
   ]);
 
@@ -188,12 +234,12 @@ describe('Correlation — two-symbol dataset', () => {
     assert.ok(!hasNonFinite(body), 'must not contain NaN/Infinity');
   });
 
-  it('returns missing_symbols when NFLX not in dataset', async () => {
-    const { status, body } = await get(`/api/macro/correlation?datasetId=${ids.spyOnly}&symbols=SPY,NFLX&window=20`);
+  it('returns missing_symbols when MSFT not in any dataset', async () => {
+    const { status, body } = await get(`/api/macro/correlation?datasetId=${ids.spyOnly}&symbols=SPY,MSFT&window=20`);
     assert.equal(status, 200);
     assert.equal(body.ok, false);
     assert.equal(body.status, 'missing_symbols');
-    assert.deepEqual(body.missingSymbols, ['NFLX']);
+    assert.deepEqual(body.missingSymbols, ['MSFT']);
     assert.deepEqual(body.availableSymbols, ['SPY']);
     assert.ok(!hasNonFinite(body));
   });
@@ -230,12 +276,12 @@ describe('Beta — two-symbol dataset', () => {
     assert.ok(!hasNonFinite(body));
   });
 
-  it('returns missing_symbols when NFLX not in dataset', async () => {
-    const { status, body } = await get(`/api/macro/beta?datasetId=${ids.spyOnly}&asset=NFLX&benchmark=SPY`);
+  it('returns missing_symbols when MSFT not in any dataset', async () => {
+    const { status, body } = await get(`/api/macro/beta?datasetId=${ids.spyOnly}&asset=MSFT&benchmark=SPY`);
     assert.equal(status, 200);
     assert.equal(body.ok, false);
     assert.equal(body.status, 'missing_symbols');
-    assert.ok(body.missingSymbols.includes('NFLX'));
+    assert.ok(body.missingSymbols.includes('MSFT'));
     assert.ok(!hasNonFinite(body));
   });
 
@@ -321,5 +367,70 @@ describe('NaN/Infinity guard', () => {
       const { body } = await get(ep);
       assert.ok(!hasNonFinite(body), `${ep} must not contain NaN/Infinity`);
     }
+  });
+});
+
+// ── Multi-dataset auto-resolution ─────────────────────────────────────────────
+
+describe('Correlation — multi-dataset auto-resolution', () => {
+  it('auto-resolves SPY from registry when primary dataset is NFLX-only', async () => {
+    // Primary dataset: NFLX only. Registry has SPY-only dataset.
+    // Backend should auto-find the SPY dataset and compute correlation.
+    const { status, body } = await get(`/api/macro/correlation?datasetId=${ids.nflxOnly}&symbols=SPY,NFLX&window=20&timeframe=1d`);
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true, got: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'ready', `expected status=ready, got: ${body.status} (${body.message})`);
+    assert.equal(body.resolution, 'multi_dataset');
+    assert.ok(typeof body.datasetsBySymbol === 'object');
+    assert.ok(body.datasetsBySymbol.SPY, 'datasetsBySymbol.SPY should be set');
+    assert.ok(body.datasetsBySymbol.NFLX, 'datasetsBySymbol.NFLX should be set');
+    assert.ok(Array.isArray(body.matrix) && body.matrix.length === 2);
+    const corr = body.matrix[0][1];
+    assert.ok(Number.isFinite(corr), `off-diagonal must be finite, got ${corr}`);
+    assert.ok(corr >= -1 && corr <= 1);
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('returns ready when called with explicit datasetIds for SPY and NFLX', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetIds=${ids.spyOnly},${ids.nflxOnly}&symbols=SPY,NFLX&window=20&timeframe=1d`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.status, 'ready');
+    assert.equal(body.resolution, 'multi_dataset');
+    assert.ok(Array.isArray(body.matrix) && body.matrix.length === 2);
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('returns missing_symbols with action=create_dataset when no compatible dataset exists for MSFT', async () => {
+    const { status, body } = await get(`/api/macro/correlation?datasetId=${ids.spyOnly}&symbols=SPY,MSFT&window=20`);
+    assert.equal(status, 200);
+    assert.equal(body.ok, false);
+    assert.equal(body.status, 'missing_symbols');
+    assert.ok(body.missingSymbols.includes('MSFT'));
+    assert.equal(body.action, 'create_dataset');
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('beta auto-resolves NFLX from registry when primary is SPY-only', async () => {
+    const { status, body } = await get(`/api/macro/beta?datasetId=${ids.spyOnly}&asset=NFLX&benchmark=SPY&window=20`);
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true, got: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'ready');
+    assert.equal(body.resolution, 'multi_dataset');
+    assert.ok(Number.isFinite(body.beta));
+    assert.ok(Number.isFinite(body.r2));
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('beta returns missing_symbols with action when MSFT has no dataset', async () => {
+    const { status, body } = await get(`/api/macro/beta?datasetId=${ids.spyOnly}&asset=MSFT&benchmark=SPY`);
+    assert.equal(status, 200);
+    assert.equal(body.ok, false);
+    assert.equal(body.status, 'missing_symbols');
+    assert.ok(body.missingSymbols.includes('MSFT'));
+    assert.equal(body.action, 'create_dataset');
+    assert.ok(!hasNonFinite(body));
   });
 });
