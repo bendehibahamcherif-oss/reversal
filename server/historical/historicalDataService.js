@@ -177,23 +177,60 @@ export async function downloadHistoricalDataset({
 }
 
 
-function parseCsvCandles(raw) {
+// Date columns in priority order (canonical first, then common external formats)
+const DATE_COLS   = ['timestamp', 'date', 'Date', 'datetime', 'Datetime', 'time', 'Time'];
+// Close price columns in priority order
+const CLOSE_COLS  = ['close', 'Close', 'adjClose', 'Adj Close', 'adjusted_close', 'price', 'last', 'Last'];
+
+/**
+ * Parse a CSV file into a canonical candle array.
+ * Handles both our canonical format (timestamp,symbol,open,high,low,close,volume)
+ * and common external formats (Date,Open,High,Low,Close,Volume from Yahoo Finance).
+ *
+ * @param {string} raw - Raw CSV text
+ * @param {string} [inferredSymbol] - Symbol to inject when the CSV lacks a symbol column
+ * @returns {object[]} Canonical candle rows with timestamp (string), symbol, open, high, low, close, volume
+ */
+function parseCsvCandles(raw, inferredSymbol) {
   const lines = String(raw || '').trim().split(/\r?\n/).filter(Boolean);
   if (lines.length <= 1) return [];
   const headers = lines[0].split(',').map((h) => h.trim());
+
+  // Detect which columns carry date and close price
+  const dateCol  = DATE_COLS.find((c) => headers.includes(c))  ?? headers[0];
+  const closeCol = CLOSE_COLS.find((c) => headers.includes(c));
+  if (!closeCol) return []; // Unrecognised CSV — no close column
+
+  const hasSymbolCol = headers.some((h) => h.toLowerCase() === 'symbol');
+
   return lines.slice(1).map((line) => {
     const cols = line.split(',');
     const row = {};
-    headers.forEach((header, index) => { row[header] = cols[index]; });
-    for (const key of ['open', 'high', 'low', 'close', 'volume']) {
-      if (row[key] !== undefined) {
+    headers.forEach((header, index) => { row[header] = (cols[index] ?? '').trim(); });
+
+    // Normalise to canonical field names consumed by macroRoutes
+    row.timestamp = row[dateCol] ?? '';
+    row.close     = row[closeCol] ?? '';
+    if (!hasSymbolCol && inferredSymbol) row.symbol = inferredSymbol;
+
+    // Convert numeric fields (case-insensitive column support)
+    for (const key of ['open', 'Open', 'high', 'High', 'low', 'Low', 'close', 'Close', 'volume', 'Volume']) {
+      if (row[key] !== undefined && row[key] !== '') {
         const n = Number(row[key]);
         row[key] = Number.isFinite(n) ? n : null;
       }
     }
+    // Ensure lowercase aliases are populated from uppercase originals
+    if (row.close == null && row.Close != null)   row.close  = row.Close;
+    if (row.open  == null && row.Open  != null)   row.open   = row.Open;
+    if (row.high  == null && row.High  != null)   row.high   = row.High;
+    if (row.low   == null && row.Low   != null)   row.low    = row.Low;
+    if (row.volume == null && row.Volume != null) row.volume = row.Volume;
+
     return row;
-  }).filter((row) => row.timestamp && row.symbol);
+  }).filter((row) => row.timestamp && (row.symbol || inferredSymbol));
 }
+
 
 /**
  * Read candles from a stored dataset file.
@@ -207,7 +244,11 @@ export async function readDatasetCandlesAsync(datasetId) {
   try {
     const raw = await readFile(filePath, 'utf-8');
     if (String(filePath).toLowerCase().endsWith('.csv')) {
-      const candles = parseCsvCandles(raw);
+      // Pass symbol metadata so external CSVs without a symbol column get the right ticker injected
+      const inferredSymbol = record.symbol ||
+        (Array.isArray(record.symbols) && record.symbols[0] ? record.symbols[0] : '') ||
+        '';
+      const candles = parseCsvCandles(raw, inferredSymbol.toUpperCase() || undefined);
       return { ok: true, candles, meta: { datasetId, sourceFormat: 'csv' }, dataset: record };
     }
     const parsed = JSON.parse(raw);

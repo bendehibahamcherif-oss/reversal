@@ -434,3 +434,217 @@ describe('Correlation — multi-dataset auto-resolution', () => {
     assert.ok(!hasNonFinite(body));
   });
 });
+
+// ── ISO timestamp regression tests ────────────────────────────────────────────
+// Production Yahoo datasets use ISO 8601 timestamps ("2026-06-11T00:00:00.000Z").
+// The old timeOf() did Number(isoString) which is NaN → all candles dropped → alignedRows 0.
+
+/** Write SPY CSV using ISO 8601 timestamps (canonical production format). */
+function writeIsoSpyCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 400;
+  for (let i = 0; i < 10; i++) {
+    const drift = Math.sin(i / 4) * 2;
+    price = Math.max(300, price + drift);
+    const date = new Date(Date.UTC(2026, 5, 1 + i)).toISOString(); // 2026-06-01T00:00:00.000Z
+    rows.push(`${date},SPY,${price.toFixed(2)},${(price+1).toFixed(2)},${(price-1).toFixed(2)},${price.toFixed(2)},1000000`);
+  }
+  const csvPath = join(dir, 'iso_spy.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+/** Write NFLX CSV using ISO 8601 timestamps — same dates as ISO SPY fixture. */
+function writeIsoNflxCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 500;
+  for (let i = 0; i < 10; i++) {
+    const drift = Math.cos(i / 3) * 3;
+    price = Math.max(200, price + drift);
+    const date = new Date(Date.UTC(2026, 5, 1 + i)).toISOString();
+    rows.push(`${date},NFLX,${price.toFixed(2)},${(price+2).toFixed(2)},${(price-2).toFixed(2)},${price.toFixed(2)},500000`);
+  }
+  const csvPath = join(dir, 'iso_nflx.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+/** Write SPY CSV using the external Yahoo Finance format: Date,Open,High,Low,Close,Volume (no symbol column). */
+function writeExternalYahooCsv(dir, symbol, startPrice) {
+  const rows = ['Date,Open,High,Low,Close,Volume'];
+  let price = startPrice;
+  for (let i = 0; i < 10; i++) {
+    const drift = Math.sin(i / 4) * 2;
+    price = Math.max(100, price + drift);
+    const d = `2026-06-${String(1 + i).padStart(2, '0')}`;
+    rows.push(`${d},${price.toFixed(2)},${(price+1).toFixed(2)},${(price-1).toFixed(2)},${price.toFixed(2)},1000000`);
+  }
+  const csvPath = join(dir, `yahoo_${symbol.toLowerCase()}.csv`);
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+/** Write a CSV with no close column at all. */
+function writeNoCloseCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,volume'];
+  rows.push('2026-06-01T00:00:00.000Z,SPY,400,401,399,1000000');
+  const csvPath = join(dir, 'no_close.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+/** Write two datasets that share NO overlapping dates. */
+function writeNoOverlapSpyCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 400;
+  for (let i = 0; i < 5; i++) {
+    price += 1;
+    rows.push(`${new Date(Date.UTC(2026, 0, 1 + i)).toISOString()},SPY,${price},${price+1},${price-1},${price},1000000`);
+  }
+  const csvPath = join(dir, 'no_overlap_spy.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+function writeNoOverlapNflxCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 500;
+  for (let i = 0; i < 5; i++) {
+    price += 2;
+    rows.push(`${new Date(Date.UTC(2026, 6, 1 + i)).toISOString()},NFLX,${price},${price+1},${price-1},${price},500000`);
+  }
+  const csvPath = join(dir, 'no_overlap_nflx.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+describe('ISO timestamp alignment — production dataset format', () => {
+  let isoIds;
+  before(async () => {
+    const isoSpyCsv  = writeIsoSpyCsv(tmpDir);
+    const isoNflxCsv = writeIsoNflxCsv(tmpDir);
+    isoIds = { spy: 'iso_test_spy', nflx: 'iso_test_nflx' };
+    await Promise.all([
+      patchRegistryWithSymbol(isoIds.spy,  isoSpyCsv,  'SPY'),
+      patchRegistryWithSymbol(isoIds.nflx, isoNflxCsv, 'NFLX'),
+    ]);
+  });
+
+  it('correlation with ISO timestamp datasets returns ready, not not_enough_data', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetIds=${isoIds.spy},${isoIds.nflx}&symbols=SPY,NFLX&window=5&timeframe=1d`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true, got: ${JSON.stringify(body.diagnostics ?? body)}`);
+    assert.equal(body.status, 'ready', `got status=${body.status}: ${JSON.stringify(body.diagnostics ?? {})}`);
+    assert.ok(body.observations >= 5, `expected >= 5 aligned rows, got ${body.observations}`);
+    assert.ok(Array.isArray(body.matrix) && body.matrix.length === 2);
+    const corr = body.matrix[0][1];
+    assert.ok(Number.isFinite(corr), `off-diagonal must be finite, got ${corr}`);
+    assert.ok(corr >= -1 && corr <= 1);
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('beta with ISO timestamp datasets returns finite beta and r2', async () => {
+    const { status, body } = await get(
+      `/api/macro/beta?datasetIds=${isoIds.spy},${isoIds.nflx}&asset=NFLX&benchmark=SPY&window=5`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true, got: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'ready');
+    assert.ok(Number.isFinite(body.beta), `beta must be finite, got ${body.beta}`);
+    assert.ok(Number.isFinite(body.r2),   `r2 must be finite, got ${body.r2}`);
+    assert.ok(body.observations >= 5);
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('not_enough_data response includes structured diagnostics when overlap is insufficient', async () => {
+    // Use a 2-row dataset (only 1 return each) — fewer than 2 aligned pairs → not_enough_data
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetId=${ids.tiny}&symbols=SPY,NFLX&window=5`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.status, 'not_enough_data');
+    assert.ok(body.diagnostics, 'diagnostics must be present');
+    assert.ok(typeof body.diagnostics.reason === 'string', 'diagnostics.reason must be a string');
+    assert.ok(Array.isArray(body.diagnostics.parsedSeries), 'parsedSeries must be array');
+    // parsedSeries must show actual parsed row counts (not 0) — the data loaded, just not enough overlap
+    for (const s of body.diagnostics.parsedSeries) {
+      assert.ok(s.returnCount >= 0, `${s.symbol} returnCount must be >= 0, got ${s.returnCount}`);
+    }
+    assert.ok(!hasNonFinite(body));
+  });
+});
+
+describe('External CSV format — Date/Close columns (Yahoo Finance export style)', () => {
+  let extIds;
+  before(async () => {
+    const extSpyCsv  = writeExternalYahooCsv(tmpDir, 'SPY',  400);
+    const extNflxCsv = writeExternalYahooCsv(tmpDir, 'NFLX', 500);
+    extIds = { spy: 'ext_test_spy', nflx: 'ext_test_nflx' };
+    await Promise.all([
+      patchRegistryWithSymbol(extIds.spy,  extSpyCsv,  'SPY'),
+      patchRegistryWithSymbol(extIds.nflx, extNflxCsv, 'NFLX'),
+    ]);
+  });
+
+  it('external Date/Close CSV aligns and produces finite correlation', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetIds=${extIds.spy},${extIds.nflx}&symbols=SPY,NFLX&window=5&timeframe=1d`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true: ${JSON.stringify(body.diagnostics ?? body)}`);
+    assert.equal(body.status, 'ready');
+    assert.ok(body.observations >= 5);
+    const corr = body.matrix[0][1];
+    assert.ok(Number.isFinite(corr));
+    assert.ok(corr >= -1 && corr <= 1);
+    assert.ok(!hasNonFinite(body));
+  });
+});
+
+describe('Missing close column — returns diagnostic', () => {
+  let noCloseId;
+  before(async () => {
+    const noCloseCsv = writeNoCloseCsv(tmpDir);
+    noCloseId = 'no_close_test';
+    await patchRegistryWithSymbol(noCloseId, noCloseCsv, 'SPY');
+  });
+
+  it('returns missing_symbols or not_enough_data, not a crash, when close column absent', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetId=${noCloseId}&symbols=SPY,NFLX&window=5`
+    );
+    assert.equal(status, 200);
+    assert.ok(body.ok === false || body.status === 'not_enough_data' || body.status === 'missing_symbols',
+      `expected error state, got: ${JSON.stringify(body)}`);
+    assert.ok(!hasNonFinite(body));
+  });
+});
+
+describe('No overlapping dates — structured diagnostic, not silent 0', () => {
+  let noOverlapIds;
+  before(async () => {
+    const spyCsv  = writeNoOverlapSpyCsv(tmpDir);
+    const nflxCsv = writeNoOverlapNflxCsv(tmpDir);
+    noOverlapIds = { spy: 'no_overlap_spy', nflx: 'no_overlap_nflx' };
+    await Promise.all([
+      patchRegistryWithSymbol(noOverlapIds.spy,  spyCsv,  'SPY'),
+      patchRegistryWithSymbol(noOverlapIds.nflx, nflxCsv, 'NFLX'),
+    ]);
+  });
+
+  it('returns not_enough_data with reason=no_overlap and both parsedSeries having data', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetIds=${noOverlapIds.spy},${noOverlapIds.nflx}&symbols=SPY,NFLX&window=5`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.status, 'not_enough_data');
+    assert.ok(body.diagnostics, 'diagnostics must be present');
+    assert.equal(body.diagnostics.reason, 'no_overlap');
+    // Both series must have actual returns
+    for (const s of body.diagnostics.parsedSeries) {
+      assert.ok(s.returnCount > 0, `${s.symbol} must have returnCount > 0, got ${s.returnCount}`);
+    }
+    assert.ok(!hasNonFinite(body));
+  });
+});
