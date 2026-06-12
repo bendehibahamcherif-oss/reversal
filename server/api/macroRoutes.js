@@ -33,13 +33,39 @@ function parseDatasetIds(raw) {
 }
 
 function closeOf(candle) {
-  const close = Number(candle.close ?? candle.c);
+  const v = candle.close ?? candle.Close ?? candle.adjClose ??
+            candle['Adj Close'] ?? candle.adjusted_close ?? candle.c ??
+            candle.price ?? candle.last;
+  const close = Number(v);
   return Number.isFinite(close) && close > 0 ? close : null;
 }
 
+/**
+ * Extract a canonical time key from a candle for return alignment.
+ * Handles: numeric ms timestamps, ISO 8601 strings, YYYY-MM-DD dates.
+ * Daily datasets normalize to YYYY-MM-DD so SPY and NFLX datasets align
+ * even if their exact UTC timestamps differ.
+ */
 function timeOf(candle) {
-  const ts = Number(candle.timestamp ?? candle.t);
-  return Number.isFinite(ts) ? String(ts) : null;
+  const raw = candle.timestamp ?? candle.t ?? candle.date ?? candle.Date ??
+              candle.datetime ?? candle.Datetime ?? candle.time;
+  if (raw == null) return null;
+  const n = Number(raw);
+  // Numeric ms timestamp — preserve for intraday precision
+  if (Number.isFinite(n) && n > 1e9) return String(n);
+  // String → normalize
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;              // already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10); // ISO datetime → date part
+  const parsed = Date.parse(s);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return null;
+}
+
+/** Infer ticker symbol from datasetId pattern: hist_SYMBOL_... */
+function inferSymbolFromDatasetId(datasetId) {
+  const m = String(datasetId || '').match(/^hist_([A-Z0-9^.]+)_/i);
+  return m ? m[1].toUpperCase() : null;
 }
 
 // ── Numerical helpers ──────────────────────────────────────────────────────────
@@ -201,16 +227,36 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
 
   // ── Case A: explicit multi-dataset IDs ──────────────────────────────────────
   if (datasetIds && datasetIds.length > 0) {
-    for (const dsId of datasetIds) {
+    const loadDiagnostics = [];
+    for (let idx = 0; idx < datasetIds.length; idx++) {
+      const dsId = datasetIds[idx];
       const result = await readDatasetCandlesAsync(dsId);
-      if (!result.ok) continue;
-      for (const c of result.candles) {
+      const diag = { datasetId: dsId, ok: result.ok, error: result.error ?? null, rawCount: 0, parsedCount: 0, inferredSymbol: null };
+      if (!result.ok) { loadDiagnostics.push(diag); continue; }
+
+      // Infer the symbol for this dataset: registry metadata > datasetId pattern > positional fallback
+      const registrySymbol = (result.dataset?.symbol || '').toUpperCase() ||
+        (Array.isArray(result.dataset?.symbols) && result.dataset.symbols[0]
+          ? String(result.dataset.symbols[0]).toUpperCase() : '') ||
+        inferSymbolFromDatasetId(dsId) ||
+        (symbols[idx] ? symbols[idx].toUpperCase() : '');
+
+      diag.inferredSymbol = registrySymbol || null;
+      diag.rawCount = result.candles.length;
+
+      // Inject symbol into candles that lack it so groupedReturns can bucket them
+      const patched = result.candles.map((c) => {
         const sym = String(c.symbol || '').toUpperCase();
-        if (symbols.includes(sym) && !datasetsBySymbol[sym]) {
-          datasetsBySymbol[sym] = dsId;
-        }
+        if (!sym && registrySymbol) return { ...c, symbol: registrySymbol };
+        return c;
+      });
+      for (const c of patched) {
+        const sym = String(c.symbol || '').toUpperCase();
+        if (symbols.includes(sym) && !datasetsBySymbol[sym]) datasetsBySymbol[sym] = dsId;
       }
-      candles = candles.concat(result.candles);
+      diag.parsedCount = patched.filter((c) => String(c.symbol || '').toUpperCase()).length;
+      loadDiagnostics.push(diag);
+      candles = candles.concat(patched);
     }
     resolution = datasetIds.length > 1 ? 'multi_dataset' : 'single_dataset';
     if (candles.length === 0) {
@@ -219,11 +265,11 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
         response: res.status(200).json(sanitizeJson({
           ok: false, status: 'dataset_not_found',
           message: 'None of the specified datasets could be loaded.',
-          datasetIds,
+          datasetIds, diagnostics: loadDiagnostics,
         })),
       };
     }
-    return { done: false, candles, datasetsBySymbol, resolution, stillMissing: [] };
+    return { done: false, candles, datasetsBySymbol, resolution, stillMissing: [], loadDiagnostics };
   }
 
   // ── Case B: single datasetId with auto-resolution ────────────────────────────
@@ -319,11 +365,27 @@ macroRoutes.get('/correlation', async (req, res) => {
     : 0;
 
   if (observations < 2) {
+    // Build structured diagnostics so the caller knows why overlap is 0
+    const parsedSeries = symbols.map((sym) => {
+      const r = returns.get(sym) || new Map();
+      const dates = [...r.keys()].sort();
+      return { symbol: sym, returnCount: r.size, firstDate: dates[0] ?? null, lastDate: dates[dates.length - 1] ?? null };
+    });
+    const reason = parsedSeries.every((s) => s.returnCount === 0)
+      ? 'no_returns_parsed'
+      : parsedSeries.some((s) => s.returnCount === 0)
+        ? 'one_series_empty'
+        : 'no_overlap';
     return res.status(200).json(sanitizeJson({
       ok: true, datasetId, datasetIds, symbols, matrix: [], observations, timeframe, window,
       status: 'not_enough_data', message: 'Not enough overlapping observations.',
       resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
-      overlapStart: null, overlapEnd: null, requiredRows: window,
+      requiredRows: window,
+      diagnostics: {
+        reason, requestedSymbols: symbols,
+        parsedSeries,
+        loadDiagnostics: loaded.loadDiagnostics ?? null,
+      },
     }));
   }
 
