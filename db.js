@@ -108,7 +108,7 @@ const createUserStmt = db.prepare(`INSERT INTO users (email, password_hash, role
 const updatePasswordStmt = db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`);
 
 export const usersDB = {
-  create({ email, passwordHash, role = 'admin' }) {
+  create({ email, passwordHash, role = 'user' }) {
     const result = createUserStmt.run(email.toLowerCase(), passwordHash, role);
     return getUserByIdStmt.get(result.lastInsertRowid);
   },

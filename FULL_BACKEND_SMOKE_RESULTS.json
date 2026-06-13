@@ -1,7 +1,7 @@
 {
   "ok": true,
   "baseUrl": "http://127.0.0.1:18095",
-  "generatedAt": "2026-06-11T20:49:51.858Z",
+  "generatedAt": "2026-06-13T06:01:14.075Z",
   "summary": {
     "total": 47,
     "passed": 47,
@@ -17,7 +17,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 7,
+      "durationMs": 5,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -31,7 +31,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 39,
+      "durationMs": 30,
       "missingKeys": [],
       "bodyStatus": "ready"
     },
@@ -86,7 +86,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "empty"
     },
@@ -100,7 +100,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 3,
       "missingKeys": [],
       "bodyStatus": "no_model"
     },
@@ -113,7 +113,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -127,7 +127,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "not_available"
     },
@@ -151,7 +151,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 11,
+      "durationMs": 9,
       "missingKeys": [],
       "bodyStatus": "dataset_missing"
     },
@@ -170,7 +170,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "no_champion_model"
     },
@@ -187,7 +187,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "model_not_found"
     },
@@ -200,7 +200,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -213,7 +213,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 13,
+      "durationMs": 10,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -230,7 +230,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "dataset_not_found"
     },
@@ -295,7 +295,7 @@
       ],
       "status": 400,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "dataset_required"
     },
@@ -310,7 +310,7 @@
       ],
       "status": 400,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": "dataset_required"
     },
@@ -331,7 +331,7 @@
       ],
       "status": 404,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "dataset_not_found"
     },
@@ -344,7 +344,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 4,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -357,7 +357,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -383,7 +383,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "not_enough_data"
     },
@@ -397,7 +397,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "not_available"
     },
@@ -424,7 +424,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 3,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -449,7 +449,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -461,7 +461,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 2,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -473,7 +473,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": "unavailable"
     },
@@ -509,7 +509,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -545,7 +545,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -593,7 +593,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 1,
+      "durationMs": 0,
       "missingKeys": [],
       "bodyStatus": null
     },
@@ -617,7 +617,7 @@
       ],
       "status": 200,
       "ok": true,
-      "durationMs": 2,
+      "durationMs": 1,
       "missingKeys": [],
       "bodyStatus": null
     },

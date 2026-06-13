@@ -1,3 +1,28 @@
+// ── In-memory cache (30s TTL by default, per symbol+timeframe key) ──────────────
+const YAHOO_CACHE_TTL_MS = Math.max(0, Number(process.env.YAHOO_CACHE_TTL_MS || 30_000));
+
+const _cache = new Map(); // key → { data, error, fetchedAt }
+
+function cacheKey(symbol, timeframe) {
+  return `${String(symbol).toUpperCase()}:${String(timeframe || '1m')}`;
+}
+
+function cacheGet(symbol, timeframe) {
+  if (YAHOO_CACHE_TTL_MS === 0) return null;
+  const entry = _cache.get(cacheKey(symbol, timeframe));
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > YAHOO_CACHE_TTL_MS) {
+    _cache.delete(cacheKey(symbol, timeframe));
+    return null;
+  }
+  return entry;
+}
+
+function cacheSet(symbol, timeframe, data, error) {
+  if (YAHOO_CACHE_TTL_MS === 0) return;
+  _cache.set(cacheKey(symbol, timeframe), { data, error, fetchedAt: Date.now() });
+}
+
 const TIMEFRAME_MAP = {
   '1m': { interval: '1m', range: '1d' },
   '5m': { interval: '5m', range: '5d' },
@@ -88,6 +113,10 @@ function validateYahooPayload(payload) {
 }
 
 async function fetchYahooChart(symbol, timeframe) {
+  // Serve from cache if still fresh
+  const cached = cacheGet(symbol, timeframe);
+  if (cached) return { data: cached.data, error: cached.error, fromCache: true };
+
   const mapping = TIMEFRAME_MAP[String(timeframe || '1m')] || DEFAULT_TIMEFRAME;
   const yahooSymbol = normalizeSymbolForYahoo(symbol);
   const url = getYahooChartUrl(yahooSymbol, mapping);
@@ -116,7 +145,10 @@ async function fetchYahooChart(symbol, timeframe) {
           continue;
         }
         recordFailure(`bad_status_${response.status}`);
-        return { data: null, error: { provider: 'yahoo', code: 'bad_status', status: response.status, retryable: false } };
+        // 404 = invalid ticker — cache the error so we don't hammer Yahoo for bad tickers
+        const err = { provider: 'yahoo', code: 'bad_status', status: response.status, retryable: false };
+        if (response.status === 404) cacheSet(symbol, timeframe, null, err);
+        return { data: null, error: err };
       }
       if (contentType.includes('text/html')) {
         const preview = (await response.text()).slice(0, 180);
@@ -137,7 +169,10 @@ async function fetchYahooChart(symbol, timeframe) {
         const emptyPayload = !payload?.chart?.result?.length;
         logYahoo(emptyPayload ? 'empty_payload' : 'invalid_payload', { symbol: yahooSymbol, attempt: attempt + 1 });
         recordFailure(emptyPayload ? 'empty_payload' : 'invalid_payload');
-        return { data: null, error: { provider: 'yahoo', code: emptyPayload ? 'empty_payload' : 'invalid_payload', retryable: false } };
+        // Invalid/empty payload for this ticker — cache so rapid retries don't hit Yahoo
+        const err = { provider: 'yahoo', code: emptyPayload ? 'empty_payload' : 'invalid_payload', retryable: false };
+        cacheSet(symbol, timeframe, null, err);
+        return { data: null, error: err };
       }
       const latestIdx = getLatestValidIndex(validated.quote, validated.timestamps);
       if (latestIdx < 0) {
@@ -151,6 +186,8 @@ async function fetchYahooChart(symbol, timeframe) {
         return { data: null, error: { provider: 'yahoo', code: 'stale_timestamp', retryable: true } };
       }
       recordSuccess();
+      // Cache successful result
+      cacheSet(symbol, timeframe, validated, null);
       return { data: validated, error: null };
     } catch (error) {
       const normalized = normalizeYahooError(error, { attempt: attempt + 1 });
@@ -165,6 +202,19 @@ async function fetchYahooChart(symbol, timeframe) {
   }
   recordFailure('exhausted_retries');
   return { data: null, error: { provider: 'yahoo', code: 'exhausted_retries', retryable: true } };
+}
+
+/** Invalidate the cache for a symbol (force live fetch on next call). */
+export function invalidateYahooCache(symbol, timeframe) {
+  if (timeframe) {
+    _cache.delete(cacheKey(symbol, timeframe));
+  } else {
+    // Invalidate all timeframes for this symbol
+    const prefix = `${String(symbol).toUpperCase()}:`;
+    for (const k of _cache.keys()) {
+      if (k.startsWith(prefix)) _cache.delete(k);
+    }
+  }
 }
 
 function getLatestValidIndex(quote, timestamps) {
@@ -265,6 +315,13 @@ export const yahooProvider = {
   getHealth(){
     const fallbackThreshold = Math.max(1, YAHOO_RETRIES + 1);
     const healthy = healthState.consecutiveFailures < fallbackThreshold;
+    // Prune stale cache entries for the stats count
+    const now = Date.now();
+    let activeCacheEntries = 0;
+    for (const [k, v] of _cache) {
+      if (now - v.fetchedAt <= YAHOO_CACHE_TTL_MS) activeCacheEntries++;
+      else _cache.delete(k);
+    }
     return {
       provider: 'yahoo',
       healthy,
@@ -272,6 +329,7 @@ export const yahooProvider = {
       consecutiveFailures: healthState.consecutiveFailures,
       lastFailureReason: healthState.lastFailureReason,
       fallbackActive: !healthy,
+      cache: { ttlMs: YAHOO_CACHE_TTL_MS, activeEntries: activeCacheEntries },
     };
   },
   getLatestOrderBook(){ return null; }
