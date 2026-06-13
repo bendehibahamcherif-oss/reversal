@@ -178,9 +178,46 @@ export async function downloadHistoricalDataset({
 
 
 // Date columns in priority order (canonical first, then common external formats)
-const DATE_COLS   = ['timestamp', 'date', 'Date', 'datetime', 'Datetime', 'time', 'Time'];
+const DATE_COLS   = ['timestamp', 'date', 'Date', 'Timestamp', 'datetime', 'Datetime', 'time', 'Time'];
 // Close price columns in priority order
 const CLOSE_COLS  = ['close', 'Close', 'adjClose', 'Adj Close', 'adjusted_close', 'price', 'last', 'Last'];
+
+function normalizeColumnName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function findHeader(headers, candidates) {
+  const normalized = headers.map((header) => [header, normalizeColumnName(header)]);
+  for (const candidate of candidates.map(normalizeColumnName)) {
+    const found = normalized.find(([, header]) => header === candidate);
+    if (found) return found[0];
+  }
+  return null;
+}
+
+function closeCandidatesForSymbol(symbol) {
+  const sym = String(symbol || '').trim();
+  return [
+    ...CLOSE_COLS,
+    ...(sym ? [`close_${sym}`, `${sym}_close`] : []),
+  ];
+}
+
+function normalizeDailyDate(raw) {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const prefix = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (prefix) return prefix[1];
+  const numeric = Number(s);
+  if (Number.isFinite(numeric) && numeric > 1e9) {
+    const ms = numeric > 1e12 ? numeric : numeric * 1000;
+    const d = new Date(ms);
+    return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : '';
+  }
+  const parsed = Date.parse(s);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : '';
+}
 
 /**
  * Parse a CSV file into a canonical candle array.
@@ -196,39 +233,37 @@ function parseCsvCandles(raw, inferredSymbol) {
   if (lines.length <= 1) return [];
   const headers = lines[0].split(',').map((h) => h.trim());
 
-  // Detect which columns carry date and close price
-  const dateCol  = DATE_COLS.find((c) => headers.includes(c))  ?? headers[0];
-  const closeCol = CLOSE_COLS.find((c) => headers.includes(c));
-  if (!closeCol) return []; // Unrecognised CSV — no close column
+  // Detect which columns carry date and close price, case-insensitively.
+  const dateCol  = findHeader(headers, DATE_COLS) ?? headers[0];
+  const closeCol = findHeader(headers, closeCandidatesForSymbol(inferredSymbol));
 
-  const hasSymbolCol = headers.some((h) => h.toLowerCase() === 'symbol');
+  const symbolCol = findHeader(headers, ['symbol']);
 
   return lines.slice(1).map((line) => {
     const cols = line.split(',');
     const row = {};
     headers.forEach((header, index) => { row[header] = (cols[index] ?? '').trim(); });
 
-    // Normalise to canonical field names consumed by macroRoutes
-    row.timestamp = row[dateCol] ?? '';
-    row.close     = row[closeCol] ?? '';
-    if (!hasSymbolCol && inferredSymbol) row.symbol = inferredSymbol;
+    // Normalise to canonical field names consumed by macroRoutes.
+    row.timestamp = normalizeDailyDate(row[dateCol]);
+    if (closeCol) row.close = row[closeCol] ?? '';
+    if (symbolCol && row[symbolCol]) row.symbol = String(row[symbolCol]).trim().toUpperCase();
+    if (!row.symbol && inferredSymbol) row.symbol = inferredSymbol;
 
-    // Convert numeric fields (case-insensitive column support)
-    for (const key of ['open', 'Open', 'high', 'High', 'low', 'Low', 'close', 'Close', 'volume', 'Volume']) {
-      if (row[key] !== undefined && row[key] !== '') {
-        const n = Number(row[key]);
-        row[key] = Number.isFinite(n) ? n : null;
+    for (const header of headers) {
+      const normalized = normalizeColumnName(header);
+      if (['open', 'high', 'low', 'close', 'adjclose', 'adjustedclose', 'price', 'last', 'volume'].includes(normalized)) {
+        const n = Number(row[header]);
+        row[header] = Number.isFinite(n) ? n : null;
       }
     }
-    // Ensure lowercase aliases are populated from uppercase originals
-    if (row.close == null && row.Close != null)   row.close  = row.Close;
-    if (row.open  == null && row.Open  != null)   row.open   = row.Open;
-    if (row.high  == null && row.High  != null)   row.high   = row.High;
-    if (row.low   == null && row.Low   != null)   row.low    = row.Low;
-    if (row.volume == null && row.Volume != null) row.volume = row.Volume;
+    if (closeCol) {
+      const close = Number(row.close);
+      row.close = Number.isFinite(close) ? close : null;
+    }
 
     return row;
-  }).filter((row) => row.timestamp && (row.symbol || inferredSymbol));
+  }).filter((row) => row.timestamp && row.symbol);
 }
 
 
