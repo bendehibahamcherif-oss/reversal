@@ -83,8 +83,8 @@ export function validatePythonOutput(result) {
     );
   }
 
-  if (typeof result.confidence !== 'number' || result.confidence < 0 || result.confidence > 1) {
-    errors.push(`confidence must be a number in [0, 1], got: ${result.confidence}`);
+  if (typeof result.confidence !== 'number' || !isFinite(result.confidence) || result.confidence < 0 || result.confidence > 1) {
+    errors.push(`confidence must be a finite number in [0, 1], got: ${result.confidence}`);
   }
 
   if (!result.probabilities || typeof result.probabilities !== 'object' || Array.isArray(result.probabilities)) {

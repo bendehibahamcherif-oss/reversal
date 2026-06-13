@@ -32,6 +32,10 @@ const JWT_SECRET =
 const JWT_EXPIRES_IN =
   process.env.JWT_EXPIRES_IN || '12h';
 
+if (!process.env.JWT_SECRET && !process.env.USER_TOKEN) {
+  console.warn('[SECURITY] Neither JWT_SECRET nor USER_TOKEN env var is set. Using insecure hardcoded default — set JWT_SECRET in production.');
+}
+
 const ALLOWED_ORIGINS_RAW =
   process.env.ALLOWED_ORIGINS || '*';
 
@@ -94,32 +98,32 @@ function verifyJwt(token) {
 }
 
 function requireAuth(req, res, next) {
+  // 1. Try JWT Bearer token (primary auth path)
   const bearer = getBearerToken(req);
-
   if (bearer) {
     const payload = verifyJwt(bearer);
-
     if (payload) {
       req.user = payload;
       return next();
     }
+    // Bearer present but invalid — reject immediately; do not fall through
+    return res.status(401).json({ error: 'Invalid or expired token' });
   }
 
-  if (!USER_TOKEN) {
-    return next();
+  // 2. Try static USER_TOKEN header/query (secondary auth path, only when configured)
+  if (USER_TOKEN) {
+    const provided =
+      req.headers['x-user-token'] ||
+      req.query.token;
+    if (provided === USER_TOKEN) {
+      return next();
+    }
+    return res.status(401).json({ error: 'Invalid or missing user token' });
   }
 
-  const provided =
-    req.headers['x-user-token'] ||
-    req.query.token;
-
-  if (provided === USER_TOKEN) {
-    return next();
-  }
-
-  return res.status(401).json({
-    error: 'Invalid or missing user token',
-  });
+  // 3. No credentials at all — always reject.
+  // Previously: if USER_TOKEN was unset, this returned next() which bypassed auth entirely.
+  return res.status(401).json({ error: 'Authentication required' });
 }
 
 const server = http.createServer(app);
@@ -184,10 +188,7 @@ app.post('/auth/register', async (req, res) => {
     });
   } catch (err) {
     console.error('REGISTER ERROR:', err);
-
-    res.status(500).json({
-      error: err.message,
-    });
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 
@@ -226,10 +227,7 @@ app.post('/auth/login', async (req, res) => {
     });
   } catch (err) {
     console.error('LOGIN ERROR:', err);
-
-    res.status(500).json({
-      error: err.message,
-    });
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
@@ -263,5 +261,8 @@ server.listen(PORT, '0.0.0.0', () => {
     } / JWT ENABLED`
   );
 
+  if (ALLOWED_ORIGINS_RAW === '*') {
+    console.warn('[SECURITY] CORS is open to all origins (ALLOWED_ORIGINS=*). Set ALLOWED_ORIGINS=https://your-frontend.com in production.');
+  }
   console.log(`🌍 CORS: ${ALLOWED_ORIGINS_RAW}`);
 });
