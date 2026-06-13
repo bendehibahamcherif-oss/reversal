@@ -14,10 +14,13 @@ const ANN_FACTOR = {
 
 // ── Parsing helpers ────────────────────────────────────────────────────────────
 
+const DATE_COLUMN_CANDIDATES = ['date', 'timestamp', 'datetime', 'time'];
+const CLOSE_COLUMN_BASE_CANDIDATES = ['close', 'adjClose', 'Adj Close', 'adjusted_close', 'price', 'last', 'c'];
+
 function parseSymbols(raw) {
   return raw
-    ? String(raw).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
-        .filter((s, i, arr) => arr.indexOf(s) === i)
+    ? String(raw).split(',').map((value) => value.trim().toUpperCase()).filter(Boolean)
+        .filter((value, index, array) => array.indexOf(value) === index)
     : undefined;
 }
 
@@ -32,34 +35,77 @@ function parseDatasetIds(raw) {
   return ids.length > 0 ? ids : null;
 }
 
-function closeOf(candle) {
-  const v = candle.close ?? candle.Close ?? candle.adjClose ??
-            candle['Adj Close'] ?? candle.adjusted_close ?? candle.c ??
-            candle.price ?? candle.last;
-  const close = Number(v);
+function normalizeColumnName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function columnCandidatesForClose(symbol) {
+  const sym = String(symbol || '').trim();
+  return [
+    ...CLOSE_COLUMN_BASE_CANDIDATES,
+    ...(sym ? [`close_${sym}`, `${sym}_close`] : []),
+  ];
+}
+
+function findColumnKey(row, candidates) {
+  if (!row || typeof row !== 'object') return null;
+  const entries = Object.keys(row).map((key) => [key, normalizeColumnName(key)]);
+  const normalizedCandidates = candidates.map((key) => normalizeColumnName(key));
+  for (const candidate of normalizedCandidates) {
+    const found = entries.find(([, normalized]) => normalized === candidate);
+    if (found) return found[0];
+  }
+  return null;
+}
+
+function detectDateColumn(candle) {
+  return findColumnKey(candle, DATE_COLUMN_CANDIDATES);
+}
+
+function detectCloseColumn(candle, symbol) {
+  return findColumnKey(candle, columnCandidatesForClose(symbol));
+}
+
+function normalizeDateKey(raw) {
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) return raw.toISOString().slice(0, 10);
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return null;
+    if (raw > 1e9) {
+      const ms = raw > 1e12 ? raw : raw * 1000;
+      const parsed = new Date(ms);
+      return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+    }
+    return String(raw);
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const datetimePrefix = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (datetimePrefix) return datetimePrefix[1];
+  const numeric = Number(s);
+  if (Number.isFinite(numeric) && numeric > 1e9) {
+    const ms = numeric > 1e12 ? numeric : numeric * 1000;
+    const parsed = new Date(ms);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+  }
+  const parsed = Date.parse(s);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return null;
+}
+
+function closeOf(candle, symbol) {
+  const closeCol = detectCloseColumn(candle, symbol);
+  const close = Number(closeCol ? candle[closeCol] : undefined);
   return Number.isFinite(close) && close > 0 ? close : null;
 }
 
 /**
- * Extract a canonical time key from a candle for return alignment.
- * Handles: numeric ms timestamps, ISO 8601 strings, YYYY-MM-DD dates.
- * Daily datasets normalize to YYYY-MM-DD so SPY and NFLX datasets align
- * even if their exact UTC timestamps differ.
+ * Extract a canonical daily time key from a candle for return alignment.
  */
 function timeOf(candle) {
-  const raw = candle.timestamp ?? candle.t ?? candle.date ?? candle.Date ??
-              candle.datetime ?? candle.Datetime ?? candle.time;
-  if (raw == null) return null;
-  const n = Number(raw);
-  // Numeric ms timestamp — preserve for intraday precision
-  if (Number.isFinite(n) && n > 1e9) return String(n);
-  // String → normalize
-  const s = String(raw).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;              // already YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10); // ISO datetime → date part
-  const parsed = Date.parse(s);
-  if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
-  return null;
+  const dateCol = detectDateColumn(candle);
+  return normalizeDateKey(dateCol ? candle[dateCol] : null);
 }
 
 /** Infer ticker symbol from datasetId pattern: hist_SYMBOL_... */
@@ -95,13 +141,13 @@ function groupedReturns(candles, symbols) {
     const symbol = String(candle.symbol || '').toUpperCase();
     if (!grouped.has(symbol)) continue;
     const time = timeOf(candle);
-    const close = closeOf(candle);
+    const close = closeOf(candle, symbol);
     if (!time || close == null) continue;
     grouped.get(symbol).push({ time, close });
   }
   const returnsBySymbol = new Map();
   for (const [symbol, rows] of grouped) {
-    rows.sort((a, b) => Number(a.time) - Number(b.time));
+    rows.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     const returns = new Map();
     for (let i = 1; i < rows.length; i += 1) {
       const prev = rows[i - 1].close;
@@ -119,8 +165,8 @@ function groupedReturns(candles, symbols) {
 function closeSeries(candles, symbol) {
   return (candles || [])
     .filter((c) => String(c.symbol || '').toUpperCase() === symbol)
-    .sort((a, b) => Number(a.timestamp ?? a.t ?? 0) - Number(b.timestamp ?? b.t ?? 0))
-    .map((c) => closeOf(c))
+    .sort((a, b) => String(timeOf(a) || '').localeCompare(String(timeOf(b) || '')))
+    .map((c) => closeOf(c, symbol))
     .filter((v) => v != null);
 }
 
@@ -135,6 +181,86 @@ function alignedPairs(aReturns, bReturns) {
   }
   return pairs;
 }
+
+function analyzeParsedSeries(candles, symbols) {
+  const bySymbol = Object.fromEntries(symbols.map((symbol) => [symbol, []]));
+  for (const candle of candles || []) {
+    const symbol = String(candle.symbol || '').toUpperCase();
+    if (bySymbol[symbol]) bySymbol[symbol].push(candle);
+  }
+  const parsedSeries = {};
+  for (const symbol of symbols) {
+    const rows = bySymbol[symbol] || [];
+    const dateColumn = rows.map(detectDateColumn).find(Boolean) || null;
+    const closeColumn = rows.map((row) => detectCloseColumn(row, symbol)).find(Boolean) || null;
+    const parsed = rows.map((row) => ({ date: timeOf(row), close: closeOf(row, symbol) }));
+    const valid = parsed.filter((row) => row.date && Number.isFinite(row.close));
+    const dates = valid.map((row) => row.date).sort((a, b) => String(a).localeCompare(String(b)));
+    parsedSeries[symbol] = {
+      rawRows: rows.length,
+      parsedRows: valid.length,
+      dateColumn,
+      closeColumn,
+      firstDate: dates[0] ?? null,
+      lastDate: dates[dates.length - 1] ?? null,
+      sampleDates: dates.slice(0, 5),
+      invalidDateRows: parsed.filter((row) => !row.date).length,
+      invalidCloseRows: parsed.filter((row) => !Number.isFinite(row.close)).length,
+    };
+  }
+  return parsedSeries;
+}
+
+function commonReturnDates(returns, symbols) {
+  if (!symbols.length) return [];
+  let common = new Set([...(returns.get(symbols[0]) || new Map()).keys()]);
+  for (const symbol of symbols.slice(1)) {
+    const keys = new Set([...(returns.get(symbol) || new Map()).keys()]);
+    common = new Set([...common].filter((date) => keys.has(date)));
+  }
+  return [...common].sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+function rootCauseForZeroAlignment(parsedSeries, commonDatesCount) {
+  const entries = Object.entries(parsedSeries || {});
+  if (entries.some(([, diag]) => diag.rawRows === 0)) return 'dataset_file_missing';
+  if (entries.some(([, diag]) => !diag.dateColumn)) return 'no_date_column';
+  if (entries.some(([, diag]) => !diag.closeColumn)) return 'no_close_column';
+  if (entries.some(([, diag]) => diag.parsedRows === 0 && diag.invalidDateRows > 0)) return 'parsed_dates_format_mismatch';
+  if (entries.some(([, diag]) => diag.parsedRows === 0 && diag.invalidCloseRows > 0)) return 'close_values_invalid';
+  if (commonDatesCount === 0) return 'no_overlap';
+  return 'returns_computed_using_different_date_keys';
+}
+
+function zeroAlignmentDiagnostics({ symbols, datasetIds, datasetsBySymbol, candles, returns, loadDiagnostics }) {
+  const parsedSeriesBySymbol = analyzeParsedSeries(candles, symbols);
+  const parsedSeries = symbols.map((symbol) => {
+    const returnMap = returns.get(symbol) || new Map();
+    const returnDates = [...returnMap.keys()].sort();
+    return {
+      symbol,
+      returnCount: returnMap.size,
+      firstDate: returnDates[0] ?? parsedSeriesBySymbol[symbol]?.firstDate ?? null,
+      lastDate: returnDates[returnDates.length - 1] ?? parsedSeriesBySymbol[symbol]?.lastDate ?? null,
+      ...parsedSeriesBySymbol[symbol],
+    };
+  });
+  const dates = commonReturnDates(returns, symbols);
+  const rootCause = rootCauseForZeroAlignment(parsedSeriesBySymbol, dates.length);
+  return {
+    reason: rootCause,
+    requestedSymbols: symbols,
+    datasetIds: datasetIds || [],
+    datasetsBySymbol,
+    parsedSeries,
+    parsedSeriesBySymbol,
+    commonDatesCount: dates.length,
+    commonDatesPreview: [...dates.slice(0, 10), ...dates.slice(-10)].filter((value, index, array) => array.indexOf(value) === index),
+    loadDiagnostics: loadDiagnostics || [],
+    rootCause,
+  };
+}
+
 
 // ── Correlation / Beta calculations ───────────────────────────────────────────
 
@@ -220,7 +346,10 @@ function detectMissingSymbols(returnsBySymbol, requestedSymbols) {
  *   { done: true, response }  when a terminal HTTP response was already sent
  *   { done: false, candles, datasetsBySymbol, resolution, stillMissing }
  */
-async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res) {
+async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res, options = {}) {
+  const datasetOrderSymbols = Array.isArray(options.datasetOrderSymbols) && options.datasetOrderSymbols.length
+    ? options.datasetOrderSymbols
+    : symbols;
   const datasetsBySymbol = {};
   let candles = [];
   let resolution = 'single_dataset';
@@ -234,8 +363,9 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
       const diag = { datasetId: dsId, ok: result.ok, error: result.error ?? null, rawCount: 0, parsedCount: 0, inferredSymbol: null };
       if (!result.ok) { loadDiagnostics.push(diag); continue; }
 
-      // Infer the symbol for this dataset: registry metadata > datasetId pattern > positional fallback
-      const registrySymbol = (result.dataset?.symbol || '').toUpperCase() ||
+      // Explicit datasetIds are mapped positionally to the requested symbols first.
+      const registrySymbol = (datasetOrderSymbols[idx] ? datasetOrderSymbols[idx].toUpperCase() : '') ||
+        (result.dataset?.symbol || '').toUpperCase() ||
         (Array.isArray(result.dataset?.symbols) && result.dataset.symbols[0]
           ? String(result.dataset.symbols[0]).toUpperCase() : '') ||
         inferSymbolFromDatasetId(dsId) ||
@@ -247,7 +377,7 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
       // Inject symbol into candles that lack it so groupedReturns can bucket them
       const patched = result.candles.map((c) => {
         const sym = String(c.symbol || '').toUpperCase();
-        if (!sym && registrySymbol) return { ...c, symbol: registrySymbol };
+        if (registrySymbol && (!sym || !symbols.includes(sym))) return { ...c, symbol: registrySymbol };
         return c;
       });
       for (const c of patched) {
@@ -263,9 +393,9 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
       return {
         done: true,
         response: res.status(200).json(sanitizeJson({
-          ok: false, status: 'dataset_not_found',
+          ok: false, status: 'dataset_not_found', reason: 'dataset_not_found', alignedRows: 0,
           message: 'None of the specified datasets could be loaded.',
-          datasetIds, diagnostics: loadDiagnostics,
+          datasetIds, diagnostics: { loadDiagnostics, rootCause: 'dataset_not_found' },
         })),
       };
     }
@@ -282,11 +412,14 @@ async function resolveAndLoadCandles(primaryDatasetId, datasetIds, symbols, res)
         response: res.status(status).json(sanitizeJson({
           ok: false,
           status: primaryResult.error,
+          reason: primaryResult.error,
+          alignedRows: 0,
           error: primaryResult.error,
           message: primaryResult.error === 'dataset_not_found'
             ? 'Historical dataset not found.'
             : 'Historical dataset exists but no usable CSV/Parquet file was found.',
           datasetId: primaryDatasetId,
+          diagnostics: { rootCause: primaryResult.error },
         })),
       };
     }
@@ -336,22 +469,29 @@ macroRoutes.get('/correlation', async (req, res) => {
     return res.status(200).json({ ok: true, symbols, matrix: [], observations: 0, timeframe, window, status: 'not_enough_data', message: 'Select a dataset to compute correlation.' });
   }
 
-  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res);
+  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res, { datasetOrderSymbols: symbols });
   if (loaded.done) return loaded.response;
 
   const returns = groupedReturns(loaded.candles, symbols);
   const { missing, available } = detectMissingSymbols(returns, symbols);
 
   if (missing.length > 0) {
+    const diagnostics = zeroAlignmentDiagnostics({
+      symbols, datasetIds, datasetsBySymbol: loaded.datasetsBySymbol,
+      candles: loaded.candles, returns, loadDiagnostics: loaded.loadDiagnostics,
+    });
     return res.status(200).json(sanitizeJson({
       ok: false,
       status: 'missing_symbols',
+      reason: diagnostics.rootCause === 'no_close_column' ? 'no_close_column' : 'dataset_parse_failed',
+      alignedRows: 0,
       message: `No compatible dataset found for: ${missing.join(', ')}.`,
-      datasetId,
+      datasetId, datasetIds,
       requestedSymbols: symbols,
       availableSymbols: available,
       missingSymbols: missing,
       action: 'create_dataset',
+      diagnostics,
     }));
   }
 
@@ -376,16 +516,16 @@ macroRoutes.get('/correlation', async (req, res) => {
       : parsedSeries.some((s) => s.returnCount === 0)
         ? 'one_series_empty'
         : 'no_overlap';
+    const diagnostics = zeroAlignmentDiagnostics({
+      symbols, datasetIds, datasetsBySymbol: loaded.datasetsBySymbol,
+      candles: loaded.candles, returns, loadDiagnostics: loaded.loadDiagnostics,
+    });
     return res.status(200).json(sanitizeJson({
-      ok: true, datasetId, datasetIds, symbols, matrix: [], observations, timeframe, window,
-      status: 'not_enough_data', message: 'Not enough overlapping observations.',
+      ok: observations > 0, datasetId, datasetIds, symbols, matrix: [], observations, alignedRows: observations, timeframe, window,
+      status: 'not_enough_data', reason: diagnostics.rootCause, message: 'Not enough overlapping observations.',
       resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
       requiredRows: window,
-      diagnostics: {
-        reason, requestedSymbols: symbols,
-        parsedSeries,
-        loadDiagnostics: loaded.loadDiagnostics ?? null,
-      },
+      diagnostics,
     }));
   }
 
@@ -398,7 +538,7 @@ macroRoutes.get('/correlation', async (req, res) => {
   }
 
   return res.status(200).json(sanitizeJson({
-    ok: true, datasetId, symbols, matrix, pairs, observations, timeframe, window,
+    ok: true, datasetId, datasetIds, symbols, matrix, pairs, observations, alignedRows: observations, timeframe, window,
     status: 'ready', resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
   }));
 });
@@ -410,28 +550,37 @@ macroRoutes.get('/beta', async (req, res) => {
   const benchmark  = String(req.query.benchmark || 'SPY').toUpperCase();
   const timeframe  = req.query.timeframe || '1d';
   const window     = parseWindow(req.query.window) ?? 20;
-  const symbols    = [asset, benchmark];
+  const requestedSymbols = parseSymbols(req.query.symbols);
+  const symbols    = [asset, benchmark].filter((value, index, array) => array.indexOf(value) === index);
+  const datasetOrderSymbols = requestedSymbols || [benchmark, asset].filter((value, index, array) => array.indexOf(value) === index);
 
   if (!datasetId && !datasetIds) {
     return res.status(200).json({ ok: true, asset, benchmark, beta: null, r2: null, observations: 0, timeframe, window, status: 'not_enough_data', message: 'Select a dataset to compute beta.' });
   }
 
-  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res);
+  const loaded = await resolveAndLoadCandles(datasetId, datasetIds, symbols, res, { datasetOrderSymbols });
   if (loaded.done) return loaded.response;
 
   const returns = groupedReturns(loaded.candles, symbols);
   const { missing, available } = detectMissingSymbols(returns, symbols);
 
   if (missing.length > 0) {
+    const diagnostics = zeroAlignmentDiagnostics({
+      symbols, datasetIds, datasetsBySymbol: loaded.datasetsBySymbol,
+      candles: loaded.candles, returns, loadDiagnostics: loaded.loadDiagnostics,
+    });
     return res.status(200).json(sanitizeJson({
       ok: false,
       status: 'missing_symbols',
+      reason: diagnostics.rootCause === 'no_close_column' ? 'no_close_column' : 'dataset_parse_failed',
+      alignedRows: 0,
       message: `No compatible dataset found for: ${missing.join(', ')}.`,
-      datasetId,
+      datasetId, datasetIds,
       requestedSymbols: symbols,
       availableSymbols: available,
       missingSymbols: missing,
       action: 'create_dataset',
+      diagnostics,
     }));
   }
 
@@ -439,17 +588,21 @@ macroRoutes.get('/beta', async (req, res) => {
   const { beta, r2 } = betaFromPairs(pairs);
 
   if (pairs.length < 2 || beta === null || r2 === null) {
+    const diagnostics = zeroAlignmentDiagnostics({
+      symbols, datasetIds, datasetsBySymbol: loaded.datasetsBySymbol,
+      candles: loaded.candles, returns, loadDiagnostics: loaded.loadDiagnostics,
+    });
     return res.status(200).json(sanitizeJson({
-      ok: true, datasetId, asset, benchmark, beta: null, r2: null,
-      observations: pairs.length, timeframe, window, status: 'not_enough_data',
-      message: 'Not enough overlapping observations.',
-      resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
+      ok: false, datasetId, datasetIds, asset, benchmark, beta: null, r2: null,
+      observations: pairs.length, alignedRows: pairs.length, timeframe, window, status: 'not_enough_data',
+      reason: diagnostics.rootCause, message: 'Not enough overlapping observations.',
+      resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol, diagnostics,
     }));
   }
 
   return res.status(200).json(sanitizeJson({
-    ok: true, datasetId, asset, benchmark, beta, r2,
-    observations: pairs.length, timeframe, window, status: 'ready',
+    ok: true, datasetId, datasetIds, asset, benchmark, beta, r2,
+    observations: pairs.length, alignedRows: pairs.length, timeframe, window, status: 'ready',
     resolution: loaded.resolution, datasetsBySymbol: loaded.datasetsBySymbol,
   }));
 });
