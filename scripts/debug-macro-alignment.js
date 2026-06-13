@@ -1,108 +1,195 @@
 #!/usr/bin/env node
+/**
+ * Alignment diagnostic — shows exactly what file is read, the raw candle[0] keys,
+ * the first 5 timeOf() outputs, and the intersection size for two datasets.
+ *
+ * Usage:
+ *   node scripts/debug-macro-alignment.js [SPY_ID] [NFLX_ID]
+ *
+ * Defaults to the production IDs:
+ *   hist_SPY_1d_RTH_20250501_20260613_yahoo
+ *   hist_NFLX_1d_RTH_20250501_20260613_yahoo
+ */
+
 import { existsSync } from 'node:fs';
 import { readDatasetCandlesAsync } from '../server/historical/historicalDataService.js';
 import { historicalDatasetRegistry } from '../server/historical/historicalDatasetRegistry.js';
 
+const [,, argA, argB] = process.argv;
 const DATASETS = [
-  ['SPY', 'hist_SPY_1d_RTH_20250612_20260612_yahoo'],
-  ['NFLX', 'hist_NFLX_1d_RTH_20250612_20260612_yahoo'],
+  ['SPY',  argA || 'hist_SPY_1d_RTH_20250501_20260613_yahoo'],
+  ['NFLX', argB || 'hist_NFLX_1d_RTH_20250501_20260613_yahoo'],
 ];
 
-const dateCandidates = ['date', 'timestamp', 'datetime', 'time'];
-const closeCandidates = (symbol) => ['close', 'adjClose', 'Adj Close', 'adjusted_close', 'price', 'last', 'c', `close_${symbol}`, `${symbol}_close`];
-const norm = (value) => String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-const findKey = (row, candidates) => Object.keys(row || {}).find((key) => candidates.map(norm).includes(norm(key))) || null;
-const normalizeDate = (raw) => {
-  if (raw == null || raw === '') return null;
-  const s = String(raw).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const prefix = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
-  if (prefix) return prefix[1];
-  const n = Number(s);
-  if (Number.isFinite(n) && n > 1e9) return new Date(n > 1e12 ? n : n * 1000).toISOString().slice(0, 10);
-  const parsed = Date.parse(s);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : null;
-};
+// ── Exact copies of the production functions from macroRoutes.js ──────────────
 
-function parseRows(symbol, candles) {
-  const rows = (candles || []).map((row) => ({ ...row, symbol: row.symbol || symbol }));
-  const dateColumn = rows.map((row) => findKey(row, dateCandidates)).find(Boolean) || null;
-  const closeColumn = rows.map((row) => findKey(row, closeCandidates(symbol))).find(Boolean) || null;
-  const parsed = rows.map((row) => {
-    const dateKey = findKey(row, dateCandidates);
-    const closeKey = findKey(row, closeCandidates(symbol));
-    const date = normalizeDate(dateKey ? row[dateKey] : null);
-    const close = Number(closeKey ? row[closeKey] : undefined);
-    return { date, close: Number.isFinite(close) && close > 0 ? close : null };
-  });
-  const valid = parsed.filter((row) => row.date && Number.isFinite(row.close));
-  valid.sort((a, b) => a.date.localeCompare(b.date));
-  return { rows, dateColumn, closeColumn, parsed, valid };
+function normalizeColumnName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
 }
 
-function returnsByDate(valid) {
-  const returns = new Map();
-  for (let i = 1; i < valid.length; i += 1) {
-    const prev = valid[i - 1].close;
-    const next = valid[i].close;
-    if (prev > 0 && Number.isFinite(next)) returns.set(valid[i].date, next / prev - 1);
+function findColumnKey(row, candidates) {
+  if (!row || typeof row !== 'object') return null;
+  const entries = Object.keys(row).map((key) => [key, normalizeColumnName(key)]);
+  const normalizedCandidates = candidates.map((key) => normalizeColumnName(key));
+  for (const candidate of normalizedCandidates) {
+    const found = entries.find(([, normalized]) => normalized === candidate);
+    if (found) return found[0];
   }
-  return returns;
+  return null;
 }
 
-const parsedBySymbol = {};
-for (const [symbol, datasetId] of DATASETS) {
+function detectDateColumn(candle) {
+  return findColumnKey(candle, ['date', 'timestamp', 'datetime', 'time']);
+}
+
+function normalizeDateKey(raw) {
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date && Number.isFinite(raw.getTime())) return raw.toISOString().slice(0, 10);
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw)) return null;
+    if (raw > 1e9) {
+      const ms = raw > 1e12 ? raw : raw * 1000;
+      const parsed = new Date(ms);
+      return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+    }
+    return String(raw); // small number — not an epoch
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const datetimePrefix = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (datetimePrefix) return datetimePrefix[1];
+  const numeric = Number(s);
+  if (Number.isFinite(numeric) && numeric > 1e9) {
+    const ms = numeric > 1e12 ? numeric : numeric * 1000;
+    const parsed = new Date(ms);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : null;
+  }
+  const parsed = Date.parse(s);
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return null;
+}
+
+function timeOf(candle) {
+  const dateCol = detectDateColumn(candle);
+  return normalizeDateKey(dateCol ? candle[dateCol] : null);
+}
+
+// ── Inspect one dataset ───────────────────────────────────────────────────────
+
+async function inspect(symbol, datasetId) {
+  const sep = '═'.repeat(64);
+  console.log(`\n${sep}`);
+  console.log(`Dataset: ${datasetId}  (${symbol})`);
+
   const record = historicalDatasetRegistry.get(datasetId);
-  const filePath = record?.files?.csv || record?.files?.parquet || record?.files?.json || record?.filePath || null;
-  const read = await readDatasetCandlesAsync(datasetId);
-  const candles = read.ok ? read.candles : [];
-  const info = parseRows(symbol, candles);
-  parsedBySymbol[symbol] = info;
-  console.log(JSON.stringify({
-    datasetId,
-    filePath,
-    fileExists: Boolean(filePath && existsSync(filePath)),
-    readOk: read.ok,
-    readError: read.error || null,
-    rawRowCount: candles.length,
-    detectedColumns: [...new Set(candles.flatMap((row) => Object.keys(row || {})))],
-    detectedDateColumn: info.dateColumn,
-    detectedCloseColumn: info.closeColumn,
-    parsedRowCount: info.valid.length,
-    first5ParsedDates: info.valid.slice(0, 5).map((row) => row.date),
-    last5ParsedDates: info.valid.slice(-5).map((row) => row.date),
-    first5CloseValues: info.valid.slice(0, 5).map((row) => row.close),
-    last5CloseValues: info.valid.slice(-5).map((row) => row.close),
-    invalidDateRowsCount: info.parsed.filter((row) => !row.date).length,
-    invalidCloseRowsCount: info.parsed.filter((row) => !Number.isFinite(row.close)).length,
-  }, null, 2));
+  if (!record) {
+    console.log('  ❌  Not in registry');
+    return null;
+  }
+
+  // Which file will be loaded?
+  const csvPath  = record.files?.csv  || null;
+  const jsonPath = record.files?.json || record.filePath || null;
+  const chosenPath = csvPath || jsonPath || null;
+  const chosenFormat = chosenPath === csvPath ? 'CSV' : 'JSON';
+
+  console.log(`  filePath   : ${chosenPath}`);
+  console.log(`  format     : ${chosenFormat}`);
+  console.log(`  fileExists : ${chosenPath ? existsSync(chosenPath) : false}`);
+
+  const result = await readDatasetCandlesAsync(datasetId);
+  if (!result.ok) {
+    console.log(`  ❌  Load failed: ${result.error}`);
+    return null;
+  }
+
+  const candles = result.candles;
+  console.log(`  candleCount: ${candles.length}`);
+
+  if (candles.length === 0) {
+    console.log('  ❌  Empty candle array');
+    return null;
+  }
+
+  const c0 = candles[0];
+  const rawKeys = Object.keys(c0);
+  const dateCol  = detectDateColumn(c0);
+  const rawDateValue = dateCol ? c0[dateCol] : undefined;
+
+  console.log(`\n  candles[0] raw keys : ${JSON.stringify(rawKeys)}`);
+  console.log(`  dateColumn detected : ${JSON.stringify(dateCol)}`);
+  console.log(`  raw date value      : ${JSON.stringify(rawDateValue)}  (typeof ${typeof rawDateValue})`);
+  console.log(`  raw close value     : ${JSON.stringify(c0.close ?? c0.Close ?? c0.c)}  (typeof ${typeof (c0.close ?? c0.Close ?? c0.c)})`);
+  console.log(`  symbol field        : ${JSON.stringify(c0.symbol ?? '(missing)')}`);
+
+  // First 5 timeOf() outputs
+  const first5 = candles.slice(0, 5).map((c) => {
+    const col = detectDateColumn(c);
+    const raw = col ? c[col] : undefined;
+    const key = timeOf(c);
+    return { rawValue: raw, typeof: typeof raw, timeOfKey: key };
+  });
+  console.log('\n  First 5 timeOf() outputs:');
+  for (const row of first5) {
+    const warn = row.timeOfKey == null ? ' ⚠️  NULL KEY' : (String(row.timeOfKey).match(/^\d{10,}$/) ? ' ⚠️  NUMERIC STRING (not a date)' : '');
+    console.log(`    raw=${JSON.stringify(row.rawValue)} (${row.typeof}) → "${row.timeOfKey}"${warn}`);
+  }
+
+  // Build date key set (for intersection)
+  const keys = candles.map((c) => timeOf(c)).filter(Boolean);
+  const keySet = new Set(keys);
+  const nullCount = candles.length - keys.length;
+  const sorted = [...keySet].sort();
+
+  console.log(`\n  valid keys  : ${keys.length} / ${candles.length}  (${nullCount} null)`);
+  console.log(`  key type    : ${keys.length > 0 ? (String(keys[0]).match(/^\d{4}-\d{2}-\d{2}$/) ? 'YYYY-MM-DD ✓' : String(keys[0]).match(/^\d{10,}$/) ? 'NUMERIC EPOCH ⚠️' : 'OTHER') : '—'}`);
+  console.log(`  firstDate   : ${sorted[0] ?? '—'}`);
+  console.log(`  lastDate    : ${sorted[sorted.length - 1] ?? '—'}`);
+
+  return { symbol, datasetId, keySet, keys, sorted };
 }
 
-const spyDates = new Set(parsedBySymbol.SPY.valid.map((row) => row.date));
-const nflxDates = new Set(parsedBySymbol.NFLX.valid.map((row) => row.date));
-const commonDates = [...spyDates].filter((date) => nflxDates.has(date)).sort();
-const spyReturns = returnsByDate(parsedBySymbol.SPY.valid);
-const nflxReturns = returnsByDate(parsedBySymbol.NFLX.valid);
-const commonReturnDates = [...spyReturns.keys()].filter((date) => nflxReturns.has(date)).sort();
-const alignedRows = commonReturnDates.length;
-let rootCause = null;
-if (alignedRows === 0) {
-  const missing = DATASETS.find(([, id]) => !historicalDatasetRegistry.get(id));
-  if (missing) rootCause = 'dataset file missing';
-  else if (!parsedBySymbol.SPY.dateColumn || !parsedBySymbol.NFLX.dateColumn) rootCause = 'no date column';
-  else if (!parsedBySymbol.SPY.closeColumn || !parsedBySymbol.NFLX.closeColumn) rootCause = 'no close column';
-  else if (parsedBySymbol.SPY.parsed.some((r) => !r.date) || parsedBySymbol.NFLX.parsed.some((r) => !r.date)) rootCause = 'parsed dates format mismatch';
-  else if (parsedBySymbol.SPY.parsed.some((r) => !Number.isFinite(r.close)) || parsedBySymbol.NFLX.parsed.some((r) => !Number.isFinite(r.close))) rootCause = 'close values invalid';
-  else if (commonDates.length === 0) rootCause = 'no overlapping dates';
-  else rootCause = 'returns computed using different date keys';
+// ── Run ───────────────────────────────────────────────────────────────────────
+
+const results = [];
+for (const [symbol, datasetId] of DATASETS) {
+  const info = await inspect(symbol, datasetId);
+  results.push(info);
 }
-console.log(JSON.stringify({
-  spyDateCount: spyDates.size,
-  nflxDateCount: nflxDates.size,
-  commonDateCount: commonDates.length,
-  first10CommonDates: commonDates.slice(0, 10),
-  last10CommonDates: commonDates.slice(-10),
-  returnCommonCount: commonReturnDates.length,
-  alignedRows,
-  rootCause,
-}, null, 2));
+
+console.log(`\n${'═'.repeat(64)}`);
+console.log('Intersection');
+
+if (results.some((r) => r == null)) {
+  console.log('  ❌  Cannot compute — one or both datasets failed to load');
+  process.exit(1);
+}
+
+const [a, b] = results;
+const intersection = [...a.keySet].filter((k) => b.keySet.has(k));
+const onlyInA = [...a.keySet].filter((k) => !b.keySet.has(k));
+const onlyInB = [...b.keySet].filter((k) => !a.keySet.has(k));
+
+console.log(`  ${a.symbol} keys : ${a.keySet.size}`);
+console.log(`  ${b.symbol} keys : ${b.keySet.size}`);
+console.log(`  Intersection  : ${intersection.length}`);
+
+if (intersection.length === 0) {
+  console.log('\n  ❌  RED — no overlap');
+  console.log(`  First 3 ${a.symbol} keys : ${a.sorted.slice(0, 3).join(' | ')}`);
+  console.log(`  First 3 ${b.symbol} keys : ${b.sorted.slice(0, 3).join(' | ')}`);
+  console.log(`  Only in ${a.symbol} (3)  : ${onlyInA.sort().slice(0, 3).join(' | ')}`);
+  console.log(`  Only in ${b.symbol} (3)  : ${onlyInB.sort().slice(0, 3).join(' | ')}`);
+
+  // Root cause diagnosis
+  const aIsNumeric = a.keys.length > 0 && String(a.keys[0]).match(/^\d{10,}$/);
+  const bIsNumeric = b.keys.length > 0 && String(b.keys[0]).match(/^\d{10,}$/);
+  if (aIsNumeric && !bIsNumeric)      console.log(`\n  ROOT CAUSE: ${a.symbol} uses numeric epoch keys, ${b.symbol} uses date strings`);
+  else if (!aIsNumeric && bIsNumeric) console.log(`\n  ROOT CAUSE: ${b.symbol} uses numeric epoch keys, ${a.symbol} uses date strings`);
+  else if (aIsNumeric && bIsNumeric)  console.log('\n  ROOT CAUSE: both numeric but different values (different intraday UTC offsets?)');
+  else                                console.log('\n  ROOT CAUSE: both date strings but different values — check UTC offset or DST');
+} else {
+  console.log(`\n  ✅  GREEN — ${intersection.length} overlapping date keys`);
+  console.log(`  Sample : ${intersection.sort().slice(0, 5).join(' | ')}`);
+}
