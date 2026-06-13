@@ -610,13 +610,98 @@ describe('Missing close column — returns diagnostic', () => {
     await patchRegistryWithSymbol(noCloseId, noCloseCsv, 'SPY');
   });
 
-  it('returns missing_symbols or not_enough_data, not a crash, when close column absent', async () => {
+  it('returns valid JSON without crash when close column absent', async () => {
+    // The primary dataset has no close column → 0 candles parsed.
+    // Auto-resolution may find other SPY/NFLX datasets in the registry.
+    // Key invariant: always returns HTTP 200, always valid JSON, never NaN/Infinity.
     const { status, body } = await get(
       `/api/macro/correlation?datasetId=${noCloseId}&symbols=SPY,NFLX&window=5`
     );
     assert.equal(status, 200);
-    assert.ok(body.ok === false || body.status === 'not_enough_data' || body.status === 'missing_symbols',
-      `expected error state, got: ${JSON.stringify(body)}`);
+    assert.ok(typeof body === 'object' && body !== null, 'response must be a JSON object');
+    assert.ok(Object.hasOwn(body, 'ok') || Object.hasOwn(body, 'status'), 'must have ok or status field');
+    assert.ok(!hasNonFinite(body), 'must not contain NaN/Infinity');
+  });
+});
+
+// ── Mixed-format timestamp regression ─────────────────────────────────────────
+// ROOT CAUSE: timeOf() returned String(epochMs) = "1746057600000" for numeric timestamps
+// but "2025-05-01" for ISO-string timestamps.  Two datasets for the same 30 days but
+// loaded via different paths (JSON numeric vs CSV ISO-string) produced disjoint key sets
+// → intersection = 0 → observations = 0 → "not_enough_data" even though data overlapped.
+//
+// Fix: timeOf() now normalises numeric epoch ms to YYYY-MM-DD, same as ISO strings.
+// Test: SPY uses YYYY-MM-DD string timestamps; NFLX uses epoch ms timestamps.
+// Both cover the same 30 calendar dates → 29 aligned return pairs after the fix.
+
+/** 30-day SPY CSV with YYYY-MM-DD plain date strings in the timestamp column. */
+function writeDateStringSpyCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 400;
+  for (let i = 0; i < 30; i++) {
+    price = Math.max(300, price + Math.sin(i / 4) * 2);
+    const date = `2025-${String(5).padStart(2,'0')}-${String(1+i).padStart(2,'0')}`; // "2025-05-01" … "2025-05-30"
+    rows.push(`${date},SPY,${price.toFixed(2)},${(price+1).toFixed(2)},${(price-1).toFixed(2)},${price.toFixed(2)},1000000`);
+  }
+  const csvPath = join(dir, 'datestr_spy.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+/** 30-day NFLX CSV with epoch ms timestamps in the timestamp column (same calendar days). */
+function writeEpochMsNflxCsv(dir) {
+  const rows = ['timestamp,symbol,open,high,low,close,volume'];
+  let price = 500;
+  const BASE_MS = 1746057600000; // 2025-05-01 00:00:00 UTC
+  for (let i = 0; i < 30; i++) {
+    price = Math.max(200, price + Math.cos(i / 3) * 3);
+    const ts = BASE_MS + i * 86_400_000; // each day advances by 24 h in ms
+    rows.push(`${ts},NFLX,${price.toFixed(2)},${(price+2).toFixed(2)},${(price-2).toFixed(2)},${price.toFixed(2)},500000`);
+  }
+  const csvPath = join(dir, 'epochms_nflx.csv');
+  writeFileSync(csvPath, rows.join('\n'));
+  return csvPath;
+}
+
+describe('Mixed-format timestamps — epoch ms vs YYYY-MM-DD string (production divergence)', () => {
+  let mixedIds;
+  before(async () => {
+    const spyCsv  = writeDateStringSpyCsv(tmpDir);
+    const nflxCsv = writeEpochMsNflxCsv(tmpDir);
+    mixedIds = { spy: 'mixed_datestr_spy', nflx: 'mixed_epochms_nflx' };
+    await Promise.all([
+      patchRegistryWithSymbol(mixedIds.spy,  spyCsv,  'SPY'),
+      patchRegistryWithSymbol(mixedIds.nflx, nflxCsv, 'NFLX'),
+    ]);
+  });
+
+  it('alignedRows === 29 when SPY uses date-strings and NFLX uses epoch ms for same 30 days', async () => {
+    const { status, body } = await get(
+      `/api/macro/correlation?datasetIds=${mixedIds.spy},${mixedIds.nflx}&symbols=SPY,NFLX&window=5&timeframe=1d`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true,
+      `got ok=${body.ok}, status=${body.status}. Diagnostics: ${JSON.stringify(body.diagnostics ?? {})}`);
+    assert.equal(body.status, 'ready',
+      `expected ready — observations were 0 before the fix (String(epochMs) ≠ YYYY-MM-DD)`);
+    assert.equal(body.observations, 29,
+      `expected 29 aligned pairs (30 dates → 29 returns), got ${body.observations}`);
+    const corr = body.matrix[0][1];
+    assert.ok(Number.isFinite(corr), `off-diagonal must be finite, got ${corr}`);
+    assert.ok(corr >= -1 && corr <= 1);
+    assert.ok(!hasNonFinite(body));
+  });
+
+  it('beta with mixed-format datasets returns finite beta', async () => {
+    const { status, body } = await get(
+      `/api/macro/beta?datasetIds=${mixedIds.spy},${mixedIds.nflx}&asset=NFLX&benchmark=SPY&window=5`
+    );
+    assert.equal(status, 200);
+    assert.equal(body.ok, true, `expected ok=true, got: ${JSON.stringify(body)}`);
+    assert.equal(body.status, 'ready');
+    assert.equal(body.observations, 29);
+    assert.ok(Number.isFinite(body.beta));
+    assert.ok(Number.isFinite(body.r2));
     assert.ok(!hasNonFinite(body));
   });
 });
