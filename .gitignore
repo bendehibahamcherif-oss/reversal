@@ -18,3 +18,9 @@ server/data/
 *.pyo
 .pytest_cache/
 .claude/
+
+# Generated test artifacts
+BACKEND_COVERAGE.json
+FULL_BACKEND_SMOKE_RESULTS.json
+FULL_PLATFORM_SMOKE_RESULTS.json
+PLATFORM_SMOKE_RESULTS.json
