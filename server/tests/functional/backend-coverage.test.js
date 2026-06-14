@@ -2,44 +2,44 @@
  * backend-coverage.test.js — Comprehensive functional test suite for the reversal API.
  *
  * Architecture:
- *   before()  → read SEED_MANIFEST.json → spawnTestServer → forgeJwt
- *   [describes covering every cataloged route]
- *   after()   → killServer → write BACKEND_COVERAGE.json → assert barrier
+ *   before()  → create temp dir → copy committed fixture CSVs → write datasets.json
+ *               → spawnTestServer (throws on failure) → forgeJwt
+ *   [describes covering every cataloged route with strong assertions]
+ *   after()   → killServer → write BACKEND_COVERAGE.json → unconditional coverage barrier
+ *
+ * Seed is 100% deterministic: committed fixture CSVs under
+ *   server/tests/functional/fixtures/raw/
+ *
+ * No SKIP mechanism. If setup fails the suite fails.
  *
  * Run:
- *   SEED_DIR=./test-seed node --test --test-concurrency=1 \
- *     server/tests/functional/backend-coverage.test.js
- *
- * Skips entire suite gracefully if SEED_MANIFEST.json is absent.
+ *   node --test --test-concurrency=1 server/tests/functional/backend-coverage.test.js
  */
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
 import { spawnTestServer, killServer, forgeJwt } from './helpers.js';
 
-// ── Locate SEED_MANIFEST.json ─────────────────────────────────────────────────
+// ── Paths ──────────────────────────────────────────────────────────────────────
 
-const __filename  = fileURLToPath(import.meta.url);
-const __dir       = dirname(__filename);
-const REPO_ROOT   = resolve(__dir, '../../../');
+const __filename    = fileURLToPath(import.meta.url);
+const __dir         = dirname(__filename);
+const REPO_ROOT     = resolve(__dir, '../../../');
+const FIXTURES_RAW  = join(__dir, 'fixtures', 'raw');
 
-const seedDirRaw  = process.env.SEED_DIR || './test-seed';
-const SEED_DIR    = seedDirRaw.startsWith('/')
-  ? seedDirRaw
-  : resolve(process.cwd(), seedDirRaw);
-const MANIFEST_PATH = join(SEED_DIR, 'SEED_MANIFEST.json');
+// ── Fixed dataset IDs (deterministic) ────────────────────────────────────────
+
+const SPY_ID      = 'fixture-spy-1d';
+const NFLX_ID     = 'fixture-nflx-1d';
+const COMBINED_ID = 'fixture-spy-nflx-combined-1d';
 
 // ── Route coverage map ────────────────────────────────────────────────────────
 
-/**
- * Every route the server exposes is cataloged here.
- * Status transitions: 'pending' → 'covered:<detail>' or 'deferred:<reason>'
- */
 const COVERAGE = {};
 
 function catalogRoute(method, path) {
@@ -49,16 +49,13 @@ function catalogRoute(method, path) {
 }
 
 function markCovered(key, detail = '') {
-  if (!COVERAGE[key]) COVERAGE[key] = { status: 'pending', detail: null };
   COVERAGE[key] = { status: `covered: ${detail}`, detail };
 }
 
 function markDeferred(key, reason = '') {
-  if (!COVERAGE[key]) COVERAGE[key] = { status: 'pending', detail: null };
   COVERAGE[key] = { status: `deferred: ${reason}`, detail: reason };
 }
 
-// Catalog all known routes
 const R = {
   GET_ROOT:              catalogRoute('GET', '/'),
   GET_HEALTH:            catalogRoute('GET', '/health'),
@@ -149,19 +146,14 @@ const R = {
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 
-let serverCtx   = null; // { port, baseUrl, child, jwtSecret }
-let jwt         = null;
-let manifest    = null;
-let spyId       = null;
-let nflxId      = null;
-let qqId        = null;
-let aaplId      = null;
-let SKIP        = false;
+let serverCtx = null;
+let jwt       = null;
+let tempDir   = null;
 
-// ── Helper: HTTP request wrapper ──────────────────────────────────────────────
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 async function req(method, path, { body, token, expectStatus } = {}) {
-  const url  = `${serverCtx.baseUrl}${path}`;
+  const url     = `${serverCtx.baseUrl}${path}`;
   const headers = { 'Content-Type': 'application/json' };
   if (token !== null) {
     headers['Authorization'] = `Bearer ${token ?? jwt}`;
@@ -173,7 +165,10 @@ async function req(method, path, { body, token, expectStatus } = {}) {
   let parsed = null;
   try { parsed = JSON.parse(text); } catch { parsed = { _raw: text }; }
   if (expectStatus !== undefined) {
-    assert.equal(res.status, expectStatus, `Expected HTTP ${expectStatus} for ${method} ${path}, got ${res.status}. Body: ${text.slice(0, 200)}`);
+    assert.equal(
+      res.status, expectStatus,
+      `Expected HTTP ${expectStatus} for ${method} ${path}, got ${res.status}. Body: ${text.slice(0, 200)}`,
+    );
   }
   return { status: res.status, body: parsed };
 }
@@ -182,21 +177,18 @@ function GET(path, opts)    { return req('GET',    path, opts); }
 function POST(path, opts)   { return req('POST',   path, opts); }
 function DELETE(path, opts) { return req('DELETE', path, opts); }
 
-// ── Guard against NaN / Infinity in response bodies ───────────────────────────
+// ── Guard against NaN / Infinity ──────────────────────────────────────────────
 
 function hasNonFinite(value, path = '') {
   if (value === null || value === undefined) return false;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return true;
-  }
-  if (typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) {
-      if (hasNonFinite(v, `${path}.${k}`)) return true;
-    }
-  }
+  if (typeof value === 'number' && !Number.isFinite(value)) return true;
   if (Array.isArray(value)) {
     for (let i = 0; i < Math.min(value.length, 20); i++) {
       if (hasNonFinite(value[i], `${path}[${i}]`)) return true;
+    }
+  } else if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (hasNonFinite(v, `${path}.${k}`)) return true;
     }
   }
   return false;
@@ -205,242 +197,238 @@ function hasNonFinite(value, path = '') {
 // ── before / after ────────────────────────────────────────────────────────────
 
 before(async () => {
-  if (!existsSync(MANIFEST_PATH)) {
-    console.warn(`[functional] SEED_MANIFEST.json not found at ${MANIFEST_PATH} — skipping entire suite.`);
-    SKIP = true;
-    return;
+  // 1. Create isolated temp directory for this test run
+  tempDir = join(REPO_ROOT, 'tmp', `functional-test-${process.pid}-${Date.now()}`);
+  mkdirSync(join(tempDir, 'raw'), { recursive: true });
+
+  // 2. Copy committed fixture CSVs into temp dir
+  const SPY_CSV      = join(tempDir, 'raw', 'hist_SPY_1d_fixture.csv');
+  const NFLX_CSV     = join(tempDir, 'raw', 'hist_NFLX_1d_fixture.csv');
+  const COMBINED_CSV = join(tempDir, 'raw', 'hist_SPY_NFLX_combined_1d_fixture.csv');
+
+  copyFileSync(join(FIXTURES_RAW, 'hist_SPY_1d_fixture.csv'),             SPY_CSV);
+  copyFileSync(join(FIXTURES_RAW, 'hist_NFLX_1d_fixture.csv'),            NFLX_CSV);
+  copyFileSync(join(FIXTURES_RAW, 'hist_SPY_NFLX_combined_1d_fixture.csv'), COMBINED_CSV);
+
+  // 3. Write datasets.json with fixed IDs pointing to the temp-dir paths.
+  //    The registry reads this file directly on startup via HISTORICAL_DATA_DIR.
+  function buildEntry(datasetId, symbol, symbols, filePath, rowCount) {
+    return {
+      datasetId, id: datasetId,
+      symbol, symbols,
+      timeframe: '1d', provider: 'yahoo',
+      startDate: '2025-05-01', endDate: '2025-08-04',
+      session: 'RTH', purpose: 'general',
+      rowCount,
+      rowsBySymbol: Object.fromEntries(symbols.map((s) => [s, rowCount])),
+      files: { csv: filePath, parquet: null, json: null },
+      filePath,
+      schema: 'HistoricalCandle.v1',
+      dataHash: '', status: 'ready',
+      createdAt: '2025-01-01T00:00:00.000Z',
+      warnings: [],
+    };
   }
 
-  try {
-    manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'));
-  } catch (err) {
-    console.warn('[functional] Could not parse SEED_MANIFEST.json:', err.message, '— skipping.');
-    SKIP = true;
-    return;
-  }
+  const registry = {
+    version: 1,
+    datasets: [
+      buildEntry(SPY_ID,      'SPY',  ['SPY'],         SPY_CSV,      65),
+      buildEntry(NFLX_ID,     'NFLX', ['NFLX'],        NFLX_CSV,     65),
+      buildEntry(COMBINED_ID, 'SPY',  ['SPY', 'NFLX'], COMBINED_CSV, 130),
+    ],
+  };
+  writeFileSync(join(tempDir, 'datasets.json'), JSON.stringify(registry, null, 2));
 
-  spyId  = manifest?.datasets?.SPY?.datasetId  ?? null;
-  nflxId = manifest?.datasets?.NFLX?.datasetId ?? null;
-  qqId   = manifest?.datasets?.QQQ?.datasetId  ?? null;
-  aaplId = manifest?.datasets?.AAPL?.datasetId ?? null;
-
-  if (!spyId || !nflxId || !qqId || !aaplId) {
-    console.warn('[functional] Manifest is missing dataset IDs — skipping.');
-    SKIP = true;
-    return;
-  }
-
-  // Spawn the real server
-  try {
-    serverCtx = await spawnTestServer({
-      seedDir:   SEED_DIR,
-      jwtSecret: manifest.jwtSecret || 'functional-test-secret-change-in-ci',
-      port:      manifest.testPort  || undefined,
-    });
-  } catch (err) {
-    console.error('[functional] Failed to spawn test server:', err.message);
-    SKIP = true;
-    return;
-  }
+  // 4. Spawn the real server.js with HISTORICAL_DATA_DIR pointing to tempDir.
+  //    spawnTestServer throws if the server does not become healthy — no silent skip.
+  serverCtx = await spawnTestServer({
+    seedDir:   tempDir,
+    jwtSecret: 'functional-test-secret-change-in-ci',
+  });
 
   jwt = forgeJwt(serverCtx.jwtSecret);
-  console.log(`[functional] Server running at ${serverCtx.baseUrl}`);
+  console.log(`[functional] Server at ${serverCtx.baseUrl}  tempDir=${tempDir}`);
 });
 
 after(async () => {
-  if (serverCtx?.child) {
-    await killServer(serverCtx.child);
+  if (serverCtx?.child) await killServer(serverCtx.child);
+
+  // Clean up temp dir
+  if (tempDir) {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
-  // Write BACKEND_COVERAGE.json
+  // Write BACKEND_COVERAGE.json — always
   const covPath = join(REPO_ROOT, 'BACKEND_COVERAGE.json');
-  const covData = {
-    generatedAt: new Date().toISOString(),
-    seedDir:     SEED_DIR,
-    routes:      COVERAGE,
-  };
   try {
-    writeFileSync(covPath, JSON.stringify(covData, null, 2));
+    writeFileSync(covPath, JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      routes: COVERAGE,
+    }, null, 2));
     console.log(`[functional] Coverage written to ${covPath}`);
   } catch (err) {
     console.warn('[functional] Could not write BACKEND_COVERAGE.json:', err.message);
   }
 
-  // Coverage barrier: every route must be covered or explicitly deferred
-  if (!SKIP) {
-    const uncovered = Object.entries(COVERAGE).filter(
-      ([, v]) => !v.status.startsWith('covered') && !v.status.startsWith('deferred:'),
-    );
-    if (uncovered.length > 0) {
-      console.error('[functional] COVERAGE BARRIER FAILED — uncovered routes:');
-      for (const [key] of uncovered) console.error(`  ${key}`);
-      // Use assert to fail the test
-      assert.equal(uncovered.length, 0, `${uncovered.length} route(s) are neither covered nor deferred: ${uncovered.map(([k]) => k).join(', ')}`);
-    }
+  // Coverage barrier — UNCONDITIONAL.
+  // Every route must be covered or explicitly deferred.
+  const uncovered = Object.entries(COVERAGE).filter(
+    ([, v]) => !v.status.startsWith('covered') && !v.status.startsWith('deferred:'),
+  );
+  if (uncovered.length > 0) {
+    console.error('[functional] COVERAGE BARRIER FAILED — uncovered routes:');
+    for (const [key] of uncovered) console.error(`  ${key}`);
   }
+  assert.equal(
+    uncovered.length, 0,
+    `${uncovered.length} route(s) are neither covered nor deferred:\n` +
+    uncovered.map(([k]) => `  ${k}`).join('\n'),
+  );
 });
-
-// ── Tiny helper for skipping ───────────────────────────────────────────────────
-function skipIfNotReady(t) {
-  if (SKIP) {
-    t.skip('SEED_MANIFEST.json not available — skipping.');
-  }
-}
 
 // ── Health & version ──────────────────────────────────────────────────────────
 
 describe('Health & version', () => {
-  it('GET / returns ok service info', async (t) => {
-    skipIfNotReady(t);
+  it('GET / returns ok service info', async () => {
     const { body } = await GET('/');
     assert.equal(body.status, 'ok', 'Expected status: ok');
-    assert.ok(!hasNonFinite(body), 'Response must not contain NaN/Infinity');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in root response');
     markCovered(R.GET_ROOT, 'status:ok');
   });
 
-  it('GET /health returns { ok: true }', async (t) => {
-    skipIfNotReady(t);
+  it('GET /health returns { ok: true }', async () => {
     const { status, body } = await GET('/health');
     assert.equal(status, 200);
     assert.equal(body.ok, true);
     markCovered(R.GET_HEALTH, 'ok:true');
   });
 
-  it('GET /api/version returns ok with version field', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/version returns ok with version string', async () => {
     const { body } = await GET('/api/version');
     assert.equal(body.ok, true);
-    assert.ok(typeof body.version === 'string');
-    markCovered(R.GET_API_VERSION, 'ok:true version present');
+    assert.equal(typeof body.version, 'string', 'version must be a string');
+    markCovered(R.GET_API_VERSION, 'ok:true version:string');
   });
 });
 
 // ── Auth flow ─────────────────────────────────────────────────────────────────
 
-describe('Auth flow — register → login → JWT', () => {
+describe('Auth flow — register → login → /me', () => {
   const testEmail = `func-test-${Date.now()}@reversal.test`;
   const testPass  = 'FuncTestPass123!';
-  let registeredToken = null;
 
-  it('POST /auth/register creates user and returns token', async (t) => {
-    skipIfNotReady(t);
+  it('POST /auth/register creates user and returns token', async () => {
     const { status, body } = await POST('/auth/register', {
-      body:         { email: testEmail, password: testPass },
-      token:        null,
+      body: { email: testEmail, password: testPass },
+      token: null,
       expectStatus: 200,
     });
-    assert.ok(typeof body.token === 'string', 'Expected token string');
+    assert.equal(typeof body.token, 'string', 'Expected token string');
     assert.ok(body.user, 'Expected user object');
-    registeredToken = body.token;
     markCovered(R.POST_AUTH_REGISTER, 'returns token+user');
   });
 
-  it('POST /auth/login authenticates and returns token', async (t) => {
-    skipIfNotReady(t);
-    const { status, body } = await POST('/auth/login', {
-      body:         { email: testEmail, password: testPass },
-      token:        null,
+  it('POST /auth/login authenticates and returns token', async () => {
+    const { body } = await POST('/auth/login', {
+      body: { email: testEmail, password: testPass },
+      token: null,
       expectStatus: 200,
     });
-    assert.ok(typeof body.token === 'string', 'Expected token string');
+    assert.equal(typeof body.token, 'string', 'Expected token string');
     markCovered(R.POST_AUTH_LOGIN, 'returns token');
   });
 
-  it('GET /auth/me returns user with valid JWT', async (t) => {
-    skipIfNotReady(t);
-    const { status, body } = await GET('/auth/me', { expectStatus: 200 });
+  it('GET /auth/me returns user with valid JWT', async () => {
+    const { body } = await GET('/auth/me', { expectStatus: 200 });
     assert.ok(body.user, 'Expected user in response');
     markCovered(R.GET_AUTH_ME, 'returns user');
   });
 });
 
-// ── Runtime routes ────────────────────────────────────────────────────────────
+// ── Runtime & monitoring ──────────────────────────────────────────────────────
 
-describe('Runtime routes', () => {
-  it('GET /api/runtime/health returns ok:true', async (t) => {
-    skipIfNotReady(t);
+describe('Runtime & monitoring', () => {
+  it('GET /api/runtime/health returns ok:true', async () => {
     const { body } = await GET('/api/runtime/health');
     assert.equal(body.ok, true);
     markCovered(R.GET_RUNTIME_HEALTH, 'ok:true');
   });
 
-  it('GET /api/runtime/runtime-status returns ok:true', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/runtime/runtime-status returns ok:true', async () => {
     const { body } = await GET('/api/runtime/runtime-status');
     assert.equal(body.ok, true);
     markCovered(R.GET_RUNTIME_STATUS, 'ok:true');
   });
 
-  it('GET /api/monitoring/runtime-status returns ok:true', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/monitoring/runtime-status returns ok:true', async () => {
     const { body } = await GET('/api/monitoring/runtime-status');
     assert.equal(body.ok, true);
     markCovered(R.GET_MONITORING_STATUS, 'ok:true');
   });
 });
 
-// ── Historical — dataset enumeration & candle assertions ─────────────────────
+// ── Historical datasets ───────────────────────────────────────────────────────
 
-describe('Historical — dataset enumeration & strong candle assertion', () => {
-  it('GET /api/historical/providers returns provider list', async (t) => {
-    skipIfNotReady(t);
+describe('Historical — dataset enumeration & candle assertions', () => {
+  it('GET /api/historical/providers returns provider array', async () => {
     const { body } = await GET('/api/historical/providers');
     assert.equal(body.ok, true);
-    assert.ok(Array.isArray(body.providers));
-    markCovered(R.GET_HIST_PROVIDERS, 'ok:true providers array');
+    assert.ok(Array.isArray(body.providers), 'providers must be array');
+    markCovered(R.GET_HIST_PROVIDERS, 'ok:true providers:Array');
   });
 
-  it('GET /api/historical/datasets returns >= 4 seeded datasets', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/historical/datasets returns >= 2 fixture datasets', async () => {
     const { body } = await GET('/api/historical/datasets');
     assert.equal(body.ok, true);
-    assert.ok(Array.isArray(body.datasets), 'Expected datasets array');
-    assert.ok(body.datasets.length >= 4, `Expected >= 4 datasets, got ${body.datasets.length}`);
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
-    markCovered(R.GET_HIST_DATASETS, `datasets.length=${body.datasets.length} >= 4`);
+    assert.ok(Array.isArray(body.datasets), 'datasets must be array');
+    assert.ok(
+      body.datasets.length >= 2,
+      `Expected >= 2 datasets, got ${body.datasets.length}`,
+    );
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in datasets response');
+    markCovered(R.GET_HIST_DATASETS, `datasets.length=${body.datasets.length} >= 2`);
   });
 
-  it('GET /api/historical/datasets/:id returns single dataset', async (t) => {
-    skipIfNotReady(t);
-    const { body } = await GET(`/api/historical/datasets/${spyId}`);
+  it('GET /api/historical/datasets/:id returns single fixture dataset', async () => {
+    const { body } = await GET(`/api/historical/datasets/${SPY_ID}`);
     assert.equal(body.ok, true);
-    assert.equal(body.dataset.datasetId, spyId);
-    markCovered(R.GET_HIST_DATASET_ID, 'single dataset returned');
+    assert.equal(body.dataset.datasetId, SPY_ID, 'datasetId must match');
+    markCovered(R.GET_HIST_DATASET_ID, 'single dataset returned by ID');
   });
 
-  it('GET /api/historical/datasets/:id/candles (SPY) >= 50 candles', async (t) => {
-    skipIfNotReady(t);
-    const { body } = await GET(`/api/historical/datasets/${spyId}/candles`);
-    assert.equal(body.ok, true, `Expected ok:true, got: ${JSON.stringify(body).slice(0, 300)}`);
-    assert.ok(body.count >= 50, `Expected >= 50 candles for SPY, got ${body.count}`);
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
+  it('GET /api/historical/datasets/:id/candles (SPY) returns >= 50 candles', async () => {
+    const { body } = await GET(`/api/historical/datasets/${SPY_ID}/candles`);
+    assert.equal(body.ok, true, `Expected ok:true, body: ${JSON.stringify(body).slice(0, 300)}`);
+    assert.ok(
+      Number.isFinite(body.count) && body.count >= 50,
+      `Expected >= 50 candles for SPY, got ${body.count}`,
+    );
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in candles');
     markCovered(R.GET_HIST_CANDLES, `count=${body.count} >= 50`);
   });
 
-  it('GET /api/historical/status returns ok', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/historical/status returns ok:true', async () => {
     const { body } = await GET('/api/historical/status');
     assert.equal(body.ok, true);
     markCovered(R.GET_HIST_STATUS, 'ok:true');
   });
 
-  it('POST /api/historical/use-for-correlation accepts seeded dataset', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/historical/use-for-correlation accepts SPY fixture dataset', async () => {
     const { body } = await POST('/api/historical/use-for-correlation', {
-      body: { datasetId: spyId },
+      body: { datasetId: SPY_ID },
     });
-    assert.equal(body.ok, true, `Expected ok:true, got: ${JSON.stringify(body).slice(0, 300)}`);
-    markCovered(R.POST_HIST_USE_CORR, 'ok:true for seeded dataset');
+    assert.equal(body.ok, true, `Expected ok:true, body: ${JSON.stringify(body).slice(0, 300)}`);
+    markCovered(R.POST_HIST_USE_CORR, 'ok:true for fixture dataset');
   });
 });
 
-// ── Macro — STRONG assertions with real seeded data ───────────────────────────
+// ── Macro — STRONG assertions with seeded fixture data ────────────────────────
 
-describe('Macro — STRONG: correlation, beta, volatility with real seeded data', () => {
-  it('GET /api/macro/correlation with SPY+NFLX: observations >= 20', async (t) => {
-    skipIfNotReady(t);
+describe('Macro — STRONG: correlation, beta, volatility with fixture data', () => {
+  it('GET /api/macro/correlation with SPY+NFLX: observations >= 20', async () => {
     const params = new URLSearchParams({
-      datasetIds: `${spyId},${nflxId}`,
+      datasetIds: `${SPY_ID},${NFLX_ID}`,
       symbols:    'SPY,NFLX',
     });
     const { body } = await GET(`/api/macro/correlation?${params}`);
@@ -450,14 +438,13 @@ describe('Macro — STRONG: correlation, beta, volatility with real seeded data'
       Number.isFinite(body.observations) && body.observations >= 20,
       `Expected observations >= 20, got ${body.observations}`,
     );
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in macro/correlation response');
     markCovered(R.GET_MACRO_CORR, `observations=${body.observations}`);
   });
 
-  it('GET /api/macro/beta with NFLX/SPY: finite beta, r2, observations >= 20', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/macro/beta with NFLX/SPY: finite beta, r2, observations >= 20', async () => {
     const params = new URLSearchParams({
-      datasetIds: `${spyId},${nflxId}`,
+      datasetIds: `${SPY_ID},${NFLX_ID}`,
       asset:      'NFLX',
       benchmark:  'SPY',
     });
@@ -470,645 +457,660 @@ describe('Macro — STRONG: correlation, beta, volatility with real seeded data'
       Number.isFinite(body.observations) && body.observations >= 20,
       `Expected observations >= 20, got ${body.observations}`,
     );
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in macro/beta response');
     markCovered(R.GET_MACRO_BETA, `beta=${body.beta?.toFixed(3)} r2=${body.r2?.toFixed(3)} obs=${body.observations}`);
   });
 
-  it('GET /api/macro/volatility-heatmap for SPY: realizedVol > 0', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/macro/volatility-heatmap for SPY: realizedVol > 0', async () => {
     const params = new URLSearchParams({
-      datasetId: spyId,
+      datasetId: SPY_ID,
       symbols:   'SPY',
     });
     const { body } = await GET(`/api/macro/volatility-heatmap?${params}`);
     assert.equal(body.ok, true,        `Expected ok:true. Body: ${JSON.stringify(body).slice(0, 400)}`);
     assert.equal(body.status, 'ready', `Expected status:ready. Body: ${JSON.stringify(body).slice(0, 400)}`);
-    assert.ok(Array.isArray(body.items) && body.items.length > 0, 'Expected items array');
+    assert.ok(Array.isArray(body.items) && body.items.length > 0, 'Expected non-empty items array');
     const firstItem = body.items[0];
     assert.ok(
       Number.isFinite(firstItem.realizedVol) && firstItem.realizedVol > 0,
       `Expected realizedVol > 0, got ${firstItem.realizedVol}`,
     );
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in volatility-heatmap');
     markCovered(R.GET_MACRO_VOLHEAT, `realizedVol=${firstItem.realizedVol?.toFixed(4)}`);
   });
 
-  it('GET /api/macro/sector-rotation returns ok', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/macro/sector-rotation: ok:true, status not_available, sectors is Array', async () => {
     const params = new URLSearchParams({
-      datasetIds: `${spyId},${qqId}`,
-      symbols:    'SPY,QQQ',
+      datasetIds: `${SPY_ID},${NFLX_ID}`,
+      symbols:    'SPY,NFLX',
     });
     const { body } = await GET(`/api/macro/sector-rotation?${params}`);
-    // sector-rotation may return ok:true or ok:false with insufficient data; just check it responds
-    assert.ok(typeof body.ok === 'boolean', 'Expected ok field');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
-    markCovered(R.GET_MACRO_SECTOR, 'responds without crash');
+    assert.equal(body.ok, true,                   'Expected ok:true');
+    assert.equal(body.status, 'not_available',    'Expected status:not_available (metadata missing)');
+    assert.ok(Array.isArray(body.sectors),        'sectors must be an Array');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
+    markCovered(R.GET_MACRO_SECTOR, 'ok:true status:not_available sectors:Array');
   });
 });
 
-// ── Multi-asset ───────────────────────────────────────────────────────────────
+// ── Multi-asset — STRONG assertions (observations >= 20) ─────────────────────
 
-describe('Multi-asset', () => {
-  it('GET /api/multi-asset/correlation responds', async (t) => {
-    skipIfNotReady(t);
-    const params = new URLSearchParams({ symbols: 'SPY,NFLX' });
+describe('Multi-asset — STRONG: correlation uses combined fixture dataset', () => {
+  it('GET /api/multi-asset/correlation with combined SPY+NFLX dataset: observations >= 20', async () => {
+    // COMBINED_ID is a single CSV with both SPY and NFLX rows.
+    // The original bug returned observations:0; this test proves the fix holds.
+    const params = new URLSearchParams({
+      datasetId: COMBINED_ID,
+      symbols:   'SPY,NFLX',
+    });
     const { body } = await GET(`/api/multi-asset/correlation?${params}`);
-    assert.ok(typeof body.ok === 'boolean', 'Expected ok field');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
-    markCovered(R.GET_MULTI_CORR, 'responds without crash');
+    assert.equal(body.ok, true,   `Expected ok:true. Body: ${JSON.stringify(body).slice(0, 400)}`);
+    assert.equal(body.status, 'ok', `Expected status:'ok', not '${body.status}'. Body: ${JSON.stringify(body).slice(0, 400)}`);
+    assert.ok(
+      Number.isFinite(body.observations) && body.observations >= 20,
+      `Expected observations >= 20, got ${body.observations}. The original bug returns 0 here.`,
+    );
+    assert.ok(Array.isArray(body.matrix), 'matrix must be Array');
+    assert.ok(body.matrix.length >= 2,    'matrix must have >= 2 rows');
+    assert.ok(!hasNonFinite(body),        'No NaN/Infinity in multi-asset/correlation response');
+    markCovered(R.GET_MULTI_CORR, `observations=${body.observations} status:ok matrix[${body.matrix.length}]`);
   });
 
-  it('GET /api/multi-asset/beta responds', async (t) => {
-    skipIfNotReady(t);
-    const params = new URLSearchParams({ symbols: 'SPY,NFLX' });
-    const { body } = await GET(`/api/multi-asset/beta?${params}`);
-    assert.ok(typeof body.ok === 'boolean', 'Expected ok field');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity in response');
-    markCovered(R.GET_MULTI_BETA, 'responds without crash');
+  it('GET /api/multi-asset/beta — deferred: no datasetId support, requires live subscriptions', () => {
+    // The /api/multi-asset/beta route uses multiAssetEngine.betaMetrics() which
+    // reads from live market subscriptions, not historical datasets. No strong
+    // assertion is possible without live feed in CI.
+    markDeferred(R.GET_MULTI_BETA, 'multi_asset_beta_requires_live_market_subscriptions');
   });
 });
 
 // ── Market stream & feeds ─────────────────────────────────────────────────────
 
 describe('Market stream & feeds', () => {
-  it('GET /api/providers/health responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/providers/health returns ok:true + providers array', async () => {
     const { body } = await GET('/api/providers/health');
-    assert.ok(typeof body === 'object', 'Expected object response');
-    markCovered(R.GET_PROVIDERS_HEALTH, 'responds');
+    assert.equal(body.ok, true,                   'Expected ok:true');
+    assert.equal(body.success, true,              'Expected success:true');
+    assert.ok(Array.isArray(body.providers),       'providers must be Array');
+    markCovered(R.GET_PROVIDERS_HEALTH, 'ok:true success:true providers:Array');
   });
 
-  it('GET /api/market/runtime responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/market/runtime returns success:true', async () => {
     const { body } = await GET('/api/market/runtime');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_MARKET_RUNTIME, 'responds');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_MARKET_RUNTIME, 'success:true');
   });
 
-  it('GET /api/market/subscriptions responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/market/subscriptions returns success:true + subscriptions object', async () => {
     const { body } = await GET('/api/market/subscriptions');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_MARKET_SUBS, 'responds');
+    assert.equal(body.success, true,               'Expected success:true');
+    assert.equal(typeof body.subscriptions, 'object', 'subscriptions must be object');
+    assert.equal(typeof body.count, 'number',      'count must be number');
+    markCovered(R.GET_MARKET_SUBS, 'success:true subscriptions:object count:number');
   });
 
-  it('POST /api/market/subscribe responds', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/market/subscribe returns success:true', async () => {
     const { body } = await POST('/api/market/subscribe', { body: { symbol: 'SPY' } });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_MARKET_SUB, 'responds');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.POST_MARKET_SUB, 'success:true');
   });
 
-  it('DELETE /api/market/subscribe/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('DELETE /api/market/subscribe/:symbol responds 200/404/204', async () => {
     const { status } = await DELETE('/api/market/subscribe/SPY');
-    // May be 200 or 404 depending on subscription state
-    assert.ok([200, 404, 204].includes(status), `Unexpected status: ${status}`);
-    markCovered(R.DEL_MARKET_SUB, 'responds 200/404/204');
+    assert.ok([200, 204, 404].includes(status), `Unexpected status: ${status}`);
+    markCovered(R.DEL_MARKET_SUB, 'status 200|204|404');
   });
 
-  it('GET /api/feeds/status responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/feeds/status returns ok:true + success:true', async () => {
     const { body } = await GET('/api/feeds/status');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_FEEDS_STATUS, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_FEEDS_STATUS, 'ok:true success:true');
   });
 
-  it('GET /api/feeds/providers responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/feeds/providers returns success:true + providers array', async () => {
     const { body } = await GET('/api/feeds/providers');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_FEEDS_PROVIDERS, 'responds');
+    assert.equal(body.success, true,          'Expected success:true');
+    assert.ok(Array.isArray(body.providers),   'providers must be Array');
+    markCovered(R.GET_FEEDS_PROVIDERS, 'success:true providers:Array');
   });
 });
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
 
 describe('Chart', () => {
-  it('GET /api/chart/candles/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/chart/candles/:symbol returns success:true + candles Array', async () => {
     const { body } = await GET('/api/chart/candles/SPY');
-    assert.ok(typeof body === 'object');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_CHART_CANDLES, 'responds without crash');
+    assert.equal(body.success, true,      'Expected success:true');
+    assert.ok(Array.isArray(body.candles), 'candles must be Array');
+    assert.ok(!hasNonFinite(body),         'No NaN/Infinity');
+    markCovered(R.GET_CHART_CANDLES, 'success:true candles:Array');
   });
 
-  it('GET /api/chart/indicators/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/chart/indicators/:symbol returns success:true', async () => {
     const { body } = await GET('/api/chart/indicators/SPY');
-    assert.ok(typeof body === 'object');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_CHART_INDICATORS, 'responds without crash');
+    assert.equal(body.success, true, 'Expected success:true');
+    assert.ok(!hasNonFinite(body),   'No NaN/Infinity');
+    markCovered(R.GET_CHART_INDICATORS, 'success:true');
   });
 
-  it('GET /api/chart/payload/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/chart/payload/:symbol returns success:true + candles Array', async () => {
     const { body } = await GET('/api/chart/payload/SPY');
-    assert.ok(typeof body === 'object');
-    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_CHART_PAYLOAD, 'responds without crash');
+    assert.equal(body.success, true,      'Expected success:true');
+    assert.ok(Array.isArray(body.candles), 'candles must be Array');
+    assert.ok(!hasNonFinite(body),         'No NaN/Infinity');
+    markCovered(R.GET_CHART_PAYLOAD, 'success:true candles:Array');
   });
 });
 
 // ── Alerts CRUD ───────────────────────────────────────────────────────────────
 
 describe('Alerts CRUD', () => {
-  let createdAlertId = null;
-
-  it('GET /api/alerts returns list', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/alerts returns success:true + alerts Array', async () => {
     const { body } = await GET('/api/alerts');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ALERTS, 'returns list');
+    assert.equal(body.success, true,     'Expected success:true');
+    assert.ok(Array.isArray(body.alerts), 'alerts must be Array');
+    assert.equal(typeof body.count, 'number', 'count must be number');
+    markCovered(R.GET_ALERTS, 'success:true alerts:Array count:number');
   });
 
-  it('POST /api/alerts creates alert', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/alerts creates alert with id', async () => {
     const { body } = await POST('/api/alerts', {
       body: { symbol: 'SPY', type: 'price_above', threshold: 999, params: {} },
     });
-    assert.ok(typeof body === 'object');
-    if (body.alert?.id) createdAlertId = body.alert.id;
-    markCovered(R.POST_ALERTS, 'creates alert');
+    assert.equal(body.success, true,                'Expected success:true');
+    assert.ok(body.alert,                           'Expected alert object');
+    assert.equal(typeof body.alert.id, 'string',    'alert.id must be string');
+    markCovered(R.POST_ALERTS, `success:true alert.id=${body.alert?.id}`);
   });
 
-  it('GET /api/alerts/diagnostics returns diagnostics', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/alerts/diagnostics returns success:true', async () => {
     const { body } = await GET('/api/alerts/diagnostics');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ALERTS_DIAG, 'responds');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_ALERTS_DIAG, 'success:true');
   });
 
-  it('GET /api/alerts/history returns history', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/alerts/history returns success:true + history Array', async () => {
     const { body } = await GET('/api/alerts/history');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ALERTS_HIST, 'responds');
+    assert.equal(body.success, true,     'Expected success:true');
+    assert.ok(Array.isArray(body.history), 'history must be Array');
+    markCovered(R.GET_ALERTS_HIST, 'success:true history:Array');
   });
 });
 
 // ── Paper trading ─────────────────────────────────────────────────────────────
 
 describe('Paper trading', () => {
-  it('GET /api/paper/orders responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/paper/orders returns success:true + orders Array', async () => {
     const { body } = await GET('/api/paper/orders');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PAPER_ORDERS, 'responds');
+    assert.equal(body.success, true,     'Expected success:true');
+    assert.ok(Array.isArray(body.orders), 'orders must be Array');
+    markCovered(R.GET_PAPER_ORDERS, 'success:true orders:Array');
   });
 
-  it('GET /api/paper/positions responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/paper/positions returns success:true + positions Array', async () => {
     const { body } = await GET('/api/paper/positions');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PAPER_POSITIONS, 'responds');
+    assert.equal(body.success, true,        'Expected success:true');
+    assert.ok(Array.isArray(body.positions), 'positions must be Array');
+    markCovered(R.GET_PAPER_POSITIONS, 'success:true positions:Array');
   });
 });
 
-// ── Portfolio & risk ──────────────────────────────────────────────────────────
+// ── Portfolio ─────────────────────────────────────────────────────────────────
 
-describe('Portfolio & risk', () => {
-  it('GET /api/portfolio/positions responds', async (t) => {
-    skipIfNotReady(t);
+describe('Portfolio', () => {
+  it('GET /api/portfolio/positions returns ok:true + positions Array', async () => {
     const { body } = await GET('/api/portfolio/positions');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PORTFOLIO_POS, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    assert.ok(Array.isArray(body.positions), 'positions must be Array');
+    markCovered(R.GET_PORTFOLIO_POS, 'ok:true success:true positions:Array');
   });
 
-  it('GET /api/portfolio/summary responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/portfolio/summary returns ok:true + numeric totalPnL', async () => {
     const { body } = await GET('/api/portfolio/summary');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PORTFOLIO_SUM, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    assert.equal(typeof body.totalPnL, 'number', 'totalPnL must be number');
+    markCovered(R.GET_PORTFOLIO_SUM, 'ok:true success:true totalPnL:number');
   });
 
-  it('GET /api/portfolio/drawdown responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/portfolio/drawdown returns ok:true + drawdown.series Array', async () => {
     const { body } = await GET('/api/portfolio/drawdown');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PORTFOLIO_DD, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    assert.ok(body.drawdown,          'Expected drawdown sub-object');
+    assert.ok(Array.isArray(body.drawdown.series), 'drawdown.series must be Array');
+    markCovered(R.GET_PORTFOLIO_DD, 'ok:true success:true drawdown.series:Array');
   });
+});
 
-  it('GET /api/risk/summary responds', async (t) => {
-    skipIfNotReady(t);
+// ── Risk ──────────────────────────────────────────────────────────────────────
+
+describe('Risk', () => {
+  it('GET /api/risk/summary returns ok:true + risk object', async () => {
     const { body } = await GET('/api/risk/summary');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_RISK_SUMMARY, 'responds');
+    assert.equal(body.ok, true,             'Expected ok:true');
+    assert.equal(typeof body.risk, 'object', 'risk must be object');
+    markCovered(R.GET_RISK_SUMMARY, 'ok:true risk:object');
   });
 
-  it('GET /api/risk/limits responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/risk/limits returns ok:true + limits object', async () => {
     const { body } = await GET('/api/risk/limits');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_RISK_LIMITS, 'responds');
+    assert.equal(body.ok, true,               'Expected ok:true');
+    assert.equal(typeof body.limits, 'object', 'limits must be object');
+    markCovered(R.GET_RISK_LIMITS, 'ok:true limits:object');
   });
 
-  it('GET /api/risk/alerts responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/risk/alerts returns ok:true + alerts Array', async () => {
     const { body } = await GET('/api/risk/alerts');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_RISK_ALERTS, 'responds');
+    assert.equal(body.ok, true,       'Expected ok:true');
+    assert.ok(Array.isArray(body.alerts), 'alerts must be Array');
+    markCovered(R.GET_RISK_ALERTS, 'ok:true alerts:Array');
   });
 });
 
 // ── Execution & OMS ───────────────────────────────────────────────────────────
 
-describe('Execution & OMS — status endpoints', () => {
-  it('GET /api/execution/status responds', async (t) => {
-    skipIfNotReady(t);
+describe('Execution & OMS', () => {
+  it('GET /api/execution/status returns ok:true', async () => {
     const { body } = await GET('/api/execution/status');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_EXEC_STATUS, 'responds');
+    assert.equal(body.ok, true, 'Expected ok:true');
+    markCovered(R.GET_EXEC_STATUS, 'ok:true');
   });
 
-  it('GET /api/execution/risk responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/execution/risk returns ok:true', async () => {
     const { body } = await GET('/api/execution/risk');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_EXEC_RISK, 'responds');
+    assert.equal(body.ok, true, 'Expected ok:true');
+    markCovered(R.GET_EXEC_RISK, 'ok:true');
   });
 
-  it('GET /api/oms/orders responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/oms/orders returns ok:true + orders Array + count number', async () => {
     const { body } = await GET('/api/oms/orders');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_OMS_ORDERS, 'responds');
+    assert.equal(body.ok, true,          'Expected ok:true');
+    assert.ok(Array.isArray(body.orders), 'orders must be Array');
+    assert.equal(typeof body.count, 'number', 'count must be number');
+    markCovered(R.GET_OMS_ORDERS, 'ok:true orders:Array count:number');
   });
 
-  it('GET /api/oms/orders/open responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/oms/orders/open returns ok:true + orders Array', async () => {
     const { body } = await GET('/api/oms/orders/open');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_OMS_OPEN, 'responds');
+    assert.equal(body.ok, true,          'Expected ok:true');
+    assert.ok(Array.isArray(body.orders), 'orders must be Array');
+    markCovered(R.GET_OMS_OPEN, 'ok:true orders:Array');
   });
 });
 
 // ── Observability ─────────────────────────────────────────────────────────────
 
 describe('Observability', () => {
-  it('GET /api/observability/health returns ok:true', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/observability/health returns ok:true', async () => {
     const { body } = await GET('/api/observability/health');
     assert.equal(body.ok, true);
     markCovered(R.GET_OBS_HEALTH, 'ok:true');
   });
 
-  it('GET /api/observability/metrics responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/observability/metrics returns ok:true', async () => {
     const { body } = await GET('/api/observability/metrics');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_OBS_METRICS, 'responds');
+    assert.equal(body.ok, true);
+    markCovered(R.GET_OBS_METRICS, 'ok:true');
   });
 
-  it('GET /api/observability/market-session responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/observability/market-session returns ok:true', async () => {
     const { body } = await GET('/api/observability/market-session');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_OBS_SESSION, 'responds');
+    assert.equal(body.ok, true);
+    markCovered(R.GET_OBS_SESSION, 'ok:true');
   });
 });
 
 // ── Provider credentials ──────────────────────────────────────────────────────
 
 describe('Provider credentials', () => {
-  it('GET /api/providers/credentials responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/providers/credentials returns ok:true + success:true', async () => {
     const { body } = await GET('/api/providers/credentials');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PROV_CREDS, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_PROV_CREDS, 'ok:true success:true');
   });
 
-  it('GET /api/providers/status responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/providers/status returns ok:true + providers Array', async () => {
     const { body } = await GET('/api/providers/status');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PROV_STATUS, 'responds');
+    assert.equal(body.ok,      true,            'Expected ok:true');
+    assert.equal(body.success, true,            'Expected success:true');
+    assert.ok(Array.isArray(body.providers),     'providers must be Array');
+    markCovered(R.GET_PROV_STATUS, 'ok:true success:true providers:Array');
   });
 
-  it('GET /api/providers/active responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/providers/active returns ok:true + success:true', async () => {
     const { body } = await GET('/api/providers/active');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PROV_ACTIVE, 'responds');
+    assert.equal(body.ok,      true, 'Expected ok:true');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_PROV_ACTIVE, 'ok:true success:true');
   });
 });
 
-// ── ML routes ─────────────────────────────────────────────────────────────────
+// ── ML routes (Node.js status endpoints — no Python worker required) ──────────
 
-describe('ML routes — status (no Python worker needed)', () => {
-  it('GET /api/ml/health responds', async (t) => {
-    skipIfNotReady(t);
+describe('ML routes — status endpoints (no Python worker needed)', () => {
+  it('GET /api/ml/health returns ok:true + worker object', async () => {
     const { body } = await GET('/api/ml/health');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ML_HEALTH, 'responds');
+    assert.equal(body.ok,          true,     'Expected ok:true');
+    assert.equal(body.status, 'available',   'Expected status:available');
+    assert.equal(typeof body.worker, 'object', 'worker must be object');
+    markCovered(R.GET_ML_HEALTH, 'ok:true status:available worker:object');
   });
 
-  it('GET /api/ml/predictions responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ml/predictions returns ok:true + predictions Array', async () => {
     const { body } = await GET('/api/ml/predictions');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ML_PREDICTIONS, 'responds');
+    assert.equal(body.ok, true,              'Expected ok:true');
+    assert.ok(Array.isArray(body.predictions), 'predictions must be Array');
+    assert.equal(typeof body.count, 'number',  'count must be number');
+    markCovered(R.GET_ML_PREDICTIONS, 'ok:true predictions:Array count:number');
   });
 
-  it('GET /api/ml/training-runs responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ml/training-runs returns ok:true + runs Array', async () => {
     const { body } = await GET('/api/ml/training-runs');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ML_TRAINING_RUNS, 'responds');
+    assert.equal(body.ok, true,        'Expected ok:true');
+    assert.ok(Array.isArray(body.runs), 'runs must be Array');
+    markCovered(R.GET_ML_TRAINING_RUNS, 'ok:true runs:Array');
   });
 
-  it('GET /api/ml/dataset/expected-paths responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ml/dataset/expected-paths returns ok:true + expectedPaths', async () => {
     const { body } = await GET('/api/ml/dataset/expected-paths');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ML_EXPECTED_PATHS, 'responds');
+    assert.equal(body.ok, true,                    'Expected ok:true');
+    assert.ok(body.expectedPaths,                   'expectedPaths must be present');
+    markCovered(R.GET_ML_EXPECTED_PATHS, 'ok:true expectedPaths present');
   });
 });
 
-// ── AI routes ─────────────────────────────────────────────────────────────────
+// ── AI routes (Node.js engines, no Python) ────────────────────────────────────
 
 describe('AI routes', () => {
-  it('GET /api/ai/features/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ai/features/:symbol returns ok:true + symbol + records Array', async () => {
     const { body } = await GET('/api/ai/features/SPY');
-    assert.ok(typeof body === 'object');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.records), 'records must be Array');
     assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_AI_FEATURES, 'responds without crash');
+    markCovered(R.GET_AI_FEATURES, 'ok:true symbol:SPY records:Array');
   });
 
-  it('GET /api/ai/labels/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ai/labels/:symbol returns ok:true + symbol + labels Array', async () => {
     const { body } = await GET('/api/ai/labels/SPY');
-    assert.ok(typeof body === 'object');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.labels), 'labels must be Array');
     assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_AI_LABELS, 'responds without crash');
+    markCovered(R.GET_AI_LABELS, 'ok:true symbol:SPY labels:Array');
   });
 
-  it('GET /api/ai/regime/history/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/ai/regime/history/:symbol returns ok:true + symbol + history Array', async () => {
     const { body } = await GET('/api/ai/regime/history/SPY');
-    assert.ok(typeof body === 'object');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.history), 'history must be Array');
     assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
-    markCovered(R.GET_AI_REGIME, 'responds without crash');
+    markCovered(R.GET_AI_REGIME, 'ok:true symbol:SPY history:Array');
   });
 });
 
 // ── Strategy & pattern routes ─────────────────────────────────────────────────
 
 describe('Strategy & pattern routes', () => {
-  it('GET /api/alpha/signals/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/alpha/signals/:symbol returns ok:true + symbol + signals Array', async () => {
     const { body } = await GET('/api/alpha/signals/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ALPHA_SIGNALS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.signals), 'signals must be Array');
+    markCovered(R.GET_ALPHA_SIGNALS, 'ok:true symbol:SPY signals:Array');
   });
 
-  it('GET /api/patterns/signals/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/patterns/signals/:symbol returns ok:true + symbol + patterns Array', async () => {
     const { body } = await GET('/api/patterns/signals/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_PATTERN_SIGNALS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.patterns), 'patterns must be Array');
+    markCovered(R.GET_PATTERN_SIGNALS, 'ok:true symbol:SPY patterns:Array');
   });
 
-  it('GET /api/strategies/candidates/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/strategies/candidates/:symbol returns ok:true + symbol + strategies Array', async () => {
     const { body } = await GET('/api/strategies/candidates/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_STRATEGY_CANDS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.strategies), 'strategies must be Array');
+    markCovered(R.GET_STRATEGY_CANDS, 'ok:true symbol:SPY strategies:Array');
   });
 
-  it('GET /api/quant/features/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/quant/features/:symbol returns ok:true + symbol + features object', async () => {
     const { body } = await GET('/api/quant/features/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_QUANT_FEATURES, 'responds');
+    assert.equal(body.ok,     true,     'Expected ok:true');
+    assert.equal(body.symbol, 'SPY',    'Expected symbol:SPY');
+    assert.equal(typeof body.features, 'object', 'features must be object');
+    markCovered(R.GET_QUANT_FEATURES, 'ok:true symbol:SPY features:object');
   });
 
-  it('GET /api/quality/scores/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/quality/scores/:symbol returns ok:true + symbol + qualityScores Array', async () => {
     const { body } = await GET('/api/quality/scores/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_QUALITY_SCORES, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.qualityScores), 'qualityScores must be Array');
+    markCovered(R.GET_QUALITY_SCORES, 'ok:true symbol:SPY qualityScores:Array');
   });
 
-  it('GET /api/analytics/trend/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/analytics/trend/:symbol returns ok:true + symbol', async () => {
     const { body } = await GET('/api/analytics/trend/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ANALYTICS_TREND, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    markCovered(R.GET_ANALYTICS_TREND, 'ok:true symbol:SPY');
   });
 
-  it('GET /api/analytics/latest/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/analytics/latest/:symbol returns ok:true + symbol', async () => {
     const { body } = await GET('/api/analytics/latest/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_ANALYTICS_LATEST, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    markCovered(R.GET_ANALYTICS_LATEST, 'ok:true symbol:SPY');
   });
 
-  it('GET /api/strategy-lab/strategies responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/strategy-lab/strategies returns ok:true + strategies Array', async () => {
     const { body } = await GET('/api/strategy-lab/strategies');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_STRATLAB_STRATS, 'responds');
+    assert.equal(body.ok, true,             'Expected ok:true');
+    assert.ok(Array.isArray(body.strategies), 'strategies must be Array');
+    markCovered(R.GET_STRATLAB_STRATS, 'ok:true strategies:Array');
   });
 
-  it('GET /api/rules/sets/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/rules/sets/:symbol returns ok:true + symbol + ruleSets Array', async () => {
     const { body } = await GET('/api/rules/sets/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_RULES_SETS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.ruleSets), 'ruleSets must be Array');
+    markCovered(R.GET_RULES_SETS, 'ok:true symbol:SPY ruleSets:Array');
   });
 
-  it('GET /api/templates/strategies responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/templates/strategies returns ok:true + templates Array', async () => {
     const { body } = await GET('/api/templates/strategies');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_TEMPLATES_STRATS, 'responds');
+    assert.equal(body.ok, true,            'Expected ok:true');
+    assert.ok(Array.isArray(body.templates), 'templates must be Array');
+    markCovered(R.GET_TEMPLATES_STRATS, 'ok:true templates:Array');
   });
 
-  it('GET /api/session-context/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/session-context/:symbol returns ok:true + symbol', async () => {
     const { body } = await GET('/api/session-context/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_SESSION_CTX, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    markCovered(R.GET_SESSION_CTX, 'ok:true symbol:SPY');
   });
 
-  it('GET /api/reversals/points/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/reversals/points/:symbol returns ok:true + symbol + reversalPoints Array', async () => {
     const { body } = await GET('/api/reversals/points/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_REVERSALS_PTS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    assert.ok(Array.isArray(body.reversalPoints), 'reversalPoints must be Array');
+    markCovered(R.GET_REVERSALS_PTS, 'ok:true symbol:SPY reversalPoints:Array');
   });
 
-  it('GET /api/volume-profile/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/volume-profile/:symbol returns success:true', async () => {
     const { body } = await GET('/api/volume-profile/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_VOL_PROFILE, 'responds');
+    assert.equal(body.success, true, 'Expected success:true');
+    markCovered(R.GET_VOL_PROFILE, 'success:true');
   });
 });
 
 // ── Backtest & validation ─────────────────────────────────────────────────────
 
 describe('Backtest & validation', () => {
-  it('GET /api/backtest/runs responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/backtest/runs returns ok:true + runs Array', async () => {
     const { body } = await GET('/api/backtest/runs');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_BACKTEST_RUNS, 'responds');
+    assert.equal(body.ok, true,       'Expected ok:true');
+    assert.ok(Array.isArray(body.runs), 'runs must be Array');
+    markCovered(R.GET_BACKTEST_RUNS, 'ok:true runs:Array');
   });
 
-  it('GET /api/backtest/results/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/backtest/results/:symbol returns ok:true + symbol', async () => {
     const { body } = await GET('/api/backtest/results/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_BACKTEST_RESULTS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    markCovered(R.GET_BACKTEST_RESULTS, 'ok:true symbol:SPY');
   });
 
-  it('GET /api/validation/results/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/validation/results/:symbol returns ok:true + symbol', async () => {
     const { body } = await GET('/api/validation/results/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_VALIDATION_RESULTS, 'responds');
+    assert.equal(body.ok,     true,  'Expected ok:true');
+    assert.equal(body.symbol, 'SPY', 'Expected symbol:SPY');
+    markCovered(R.GET_VALIDATION_RESULTS, 'ok:true symbol:SPY');
   });
 });
 
 // ── Replay routes ─────────────────────────────────────────────────────────────
 
 describe('Replay routes', () => {
-  it('GET /api/replay/candles/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/replay/candles/:symbol returns success:true + candles Array', async () => {
     const { body } = await GET('/api/replay/candles/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_REPLAY_CANDLES, 'responds');
+    assert.equal(body.success, true,      'Expected success:true');
+    assert.ok(Array.isArray(body.candles), 'candles must be Array');
+    markCovered(R.GET_REPLAY_CANDLES, 'success:true candles:Array');
   });
 
-  it('GET /api/replay-legacy/candles/:symbol responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/replay-legacy/candles/:symbol returns success:true + candles Array', async () => {
     const { body } = await GET('/api/replay-legacy/candles/SPY');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_REPLAY_LEG_CANDLES, 'responds');
+    assert.equal(body.success, true,      'Expected success:true');
+    assert.ok(Array.isArray(body.candles), 'candles must be Array');
+    markCovered(R.GET_REPLAY_LEG_CANDLES, 'success:true candles:Array');
   });
 
-  it('POST /api/replay-session/start responds', async (t) => {
-    skipIfNotReady(t);
-    const { body } = await POST('/api/replay-session/start', {
-      body: { symbol: 'SPY' },
-    });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_REPLAY_START, 'responds');
+  it('POST /api/replay-session/start returns ok:true + action:start + state', async () => {
+    const { body } = await POST('/api/replay-session/start', { body: { symbol: 'SPY' } });
+    assert.equal(body.ok,     true,    'Expected ok:true');
+    assert.equal(body.action, 'start', 'Expected action:start');
+    assert.ok(body.state,              'Expected state object');
+    markCovered(R.POST_REPLAY_START, 'ok:true action:start state present');
   });
 
-  it('POST /api/replay-session/pause responds', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/replay-session/pause returns ok:true + action:pause', async () => {
     const { body } = await POST('/api/replay-session/pause', { body: {} });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_REPLAY_PAUSE, 'responds');
+    assert.equal(body.ok,     true,    'Expected ok:true');
+    assert.equal(body.action, 'pause', 'Expected action:pause');
+    markCovered(R.POST_REPLAY_PAUSE, 'ok:true action:pause');
   });
 
-  it('POST /api/replay-session/resume responds', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/replay-session/resume returns ok:true + action:resume', async () => {
     const { body } = await POST('/api/replay-session/resume', { body: {} });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_REPLAY_RESUME, 'responds');
+    assert.equal(body.ok,     true,     'Expected ok:true');
+    assert.equal(body.action, 'resume', 'Expected action:resume');
+    markCovered(R.POST_REPLAY_RESUME, 'ok:true action:resume');
   });
 
-  it('POST /api/replay-session/stop responds', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/replay-session/stop returns ok:true + action:stop', async () => {
     const { body } = await POST('/api/replay-session/stop', { body: {} });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_REPLAY_STOP, 'responds');
+    assert.equal(body.ok,     true,   'Expected ok:true');
+    assert.equal(body.action, 'stop', 'Expected action:stop');
+    markCovered(R.POST_REPLAY_STOP, 'ok:true action:stop');
   });
 });
 
 // ── Institutional ─────────────────────────────────────────────────────────────
 
 describe('Institutional', () => {
-  it('GET /api/institutional/scenarios/presets responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/institutional/scenarios/presets returns ok:true + non-empty presets Array', async () => {
     const { body } = await GET('/api/institutional/scenarios/presets');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_INST_PRESETS, 'responds');
+    assert.equal(body.ok, true,          'Expected ok:true');
+    assert.ok(Array.isArray(body.presets), 'presets must be Array');
+    assert.ok(body.presets.length > 0,     'presets must not be empty (static list)');
+    markCovered(R.GET_INST_PRESETS, `ok:true presets.length=${body.presets.length}`);
   });
 
-  it('GET /api/institutional/scenarios responds', async (t) => {
-    skipIfNotReady(t);
+  it('GET /api/institutional/scenarios returns ok:true + scenarios Array', async () => {
     const { body } = await GET('/api/institutional/scenarios');
-    assert.ok(typeof body === 'object');
-    markCovered(R.GET_INST_SCENARIOS, 'responds');
+    assert.equal(body.ok, true,            'Expected ok:true');
+    assert.ok(Array.isArray(body.scenarios), 'scenarios must be Array');
+    markCovered(R.GET_INST_SCENARIOS, 'ok:true scenarios:Array');
   });
 
-  it('POST /api/institutional/sizing/volatility responds', async (t) => {
-    skipIfNotReady(t);
+  it('POST /api/institutional/sizing/volatility returns ok:true with correct fields', async () => {
+    // Route requires { accountSize, annualizedVol, currentPrice } — NOT symbol/portfolioValue/riskPct
     const { body } = await POST('/api/institutional/sizing/volatility', {
-      body: { symbol: 'SPY', portfolioValue: 100000, riskPct: 0.02 },
+      body: { accountSize: 100000, annualizedVol: 0.20, currentPrice: 500 },
     });
-    assert.ok(typeof body === 'object');
-    markCovered(R.POST_INST_SIZING, 'responds');
+    assert.equal(body.ok, true, `Expected ok:true. Body: ${JSON.stringify(body).slice(0, 300)}`);
+    markCovered(R.POST_INST_SIZING, 'ok:true accountSize+annualizedVol+currentPrice');
   });
 });
 
 // ── Poison tests — suite proves it can detect failures ───────────────────────
 
-describe('Poison tests — suite proves it can detect failures', () => {
-  it('Correlation with non-existent dataset returns ok:false', async (t) => {
-    skipIfNotReady(t);
+describe('Poison tests — suite proves it bites', () => {
+  it('Macro correlation with non-existent dataset ID returns ok:false', async () => {
     const params = new URLSearchParams({
-      datasetIds: '__poison_does_not_exist__',
+      datasetIds: '__poison_does_not_exist__,__also_fake__',
       symbols:    'SPY,NFLX',
     });
     const { body } = await GET(`/api/macro/correlation?${params}`);
-    assert.equal(body.ok, false, `Expected ok:false for poison dataset. Got: ${JSON.stringify(body).slice(0, 300)}`);
+    assert.equal(
+      body.ok, false,
+      `Expected ok:false for poison dataset. Got: ${JSON.stringify(body).slice(0, 300)}`,
+    );
   });
 
-  it('Non-existent route returns 404', async (t) => {
-    skipIfNotReady(t);
+  it('Non-existent route returns 404', async () => {
     const { status } = await GET('/api/DOES_NOT_EXIST', { token: null });
     assert.equal(status, 404, `Expected 404, got ${status}`);
   });
 
-  it('Dataset deletion → correlation fails → re-seed → correlation passes again', async (t) => {
-    skipIfNotReady(t);
+  it('Multi-asset correlation WITHOUT datasetId returns not_enough_data (not ok:true/status:ok)', async () => {
+    // Without datasetId the route always returns not_enough_data.
+    // If someone removes the assertion guard this test will flip to ok:true and
+    // status:'ok' which would reveal the data path is not wired.
+    const params = new URLSearchParams({ symbols: 'SPY,NFLX' });
+    const { body } = await GET(`/api/multi-asset/correlation?${params}`);
+    assert.equal(body.ok, true,                        'ok is always true for multi-asset/correlation');
+    assert.equal(body.status, 'not_enough_data',       'Without datasetId, status must be not_enough_data');
+    assert.equal(body.observations, 0,                 'Without datasetId, observations must be 0');
+    // If the observations assertion above fails, the combined-dataset test above would also fail
+    // because a buggy route returning observations:0 is what we test against there.
+  });
 
-    // 1. Confirm correlation passes with real data
-    const params1 = new URLSearchParams({ datasetIds: `${spyId},${nflxId}`, symbols: 'SPY,NFLX' });
-    const before  = await GET(`/api/macro/correlation?${params1}`);
-    assert.equal(before.body.ok, true, 'Pre-condition: correlation must pass with real data');
-
-    // 2. Delete the SPY dataset via the registry
-    const delResp = await DELETE(`/api/historical/datasets/${spyId}`);
-    // Some servers may return 200 or 204 on delete
-    assert.ok([200, 204].includes(delResp.status), `Expected 200/204 on delete, got ${delResp.status}`);
-
-    // 3. Correlation should now fail (no SPY data)
-    const params2   = new URLSearchParams({ datasetIds: `${spyId},${nflxId}`, symbols: 'SPY,NFLX' });
-    const afterDel  = await GET(`/api/macro/correlation?${params2}`);
-    assert.equal(afterDel.body.ok, false, `Expected ok:false after deletion. Got: ${JSON.stringify(afterDel.body).slice(0, 300)}`);
-
-    // 4. Re-download SPY by calling the download endpoint
-    const dlResp = await POST('/api/historical/download', {
-      body: {
-        symbol:    'SPY',
-        timeframe: '1d',
-        provider:  'yahoo',
-        startDate: manifest.datasets.SPY.startDate,
-        endDate:   manifest.datasets.SPY.endDate,
-        purpose:   'correlation',
-      },
+  it('Institutional sizing with missing required fields returns HTTP 400', async () => {
+    // Route requires { accountSize, annualizedVol, currentPrice }.
+    // Sending wrong fields must return 400, not 200.
+    const { status, body } = await POST('/api/institutional/sizing/volatility', {
+      body: { symbol: 'SPY', portfolioValue: 100000, riskPct: 0.02 },
     });
-    assert.equal(dlResp.body.ok, true, `Re-download must succeed. Got: ${JSON.stringify(dlResp.body).slice(0, 300)}`);
-    const newSpyId = dlResp.body.dataset?.datasetId;
-    assert.ok(newSpyId, 'Re-download must return a new datasetId');
+    assert.equal(status, 400, `Expected 400 for missing required fields. Got ${status}: ${JSON.stringify(body).slice(0, 200)}`);
+    assert.equal(body.ok, false, 'Expected ok:false when required fields are absent');
+  });
 
-    // 5. Correlation passes again with the new dataset ID
-    const params3   = new URLSearchParams({ datasetIds: `${newSpyId},${nflxId}`, symbols: 'SPY,NFLX' });
-    const afterReseed = await GET(`/api/macro/correlation?${params3}`);
-    assert.equal(afterReseed.body.ok, true,        `Expected ok:true after re-seed. Got: ${JSON.stringify(afterReseed.body).slice(0, 300)}`);
-    assert.equal(afterReseed.body.status, 'ready', `Expected status:ready after re-seed`);
-    assert.ok(afterReseed.body.observations >= 20,  `Expected obs >= 20 after re-seed, got ${afterReseed.body.observations}`);
-
-    // Update the module-level spyId for remaining tests
-    spyId = newSpyId;
+  it('Macro correlation with SPY+NFLX fixture: observations >= 20 (pre-condition for poison)', async () => {
+    // Proves that the suite is sensitive: if the fixture data vanished this assertion would fail.
+    const params = new URLSearchParams({
+      datasetIds: `${SPY_ID},${NFLX_ID}`,
+      symbols:    'SPY,NFLX',
+    });
+    const { body } = await GET(`/api/macro/correlation?${params}`);
+    assert.equal(body.ok, true,        'ok must be true with fixture data');
+    assert.equal(body.status, 'ready', 'status must be ready with fixture data');
+    assert.ok(
+      body.observations >= 20,
+      `observations must be >= 20 with fixture data; got ${body.observations}. ` +
+      'If this fails, the fixture data or the correlation logic is broken.',
+    );
   });
 });
