@@ -578,28 +578,41 @@ describe('Market stream & feeds', () => {
 
 // ── Chart ─────────────────────────────────────────────────────────────────────
 
-describe('Chart', () => {
-  it('GET /api/chart/candles/:symbol returns success:true + candles Array', async () => {
-    const { body } = await GET('/api/chart/candles/SPY');
-    assert.equal(body.success, true,      'Expected success:true');
-    assert.ok(Array.isArray(body.candles), 'candles must be Array');
-    assert.ok(!hasNonFinite(body),         'No NaN/Infinity');
-    markCovered(R.GET_CHART_CANDLES, 'success:true candles:Array');
+describe('Chart — with historical dataset (datasetId=fixture-spy-1d)', () => {
+  it('GET /api/chart/candles/SPY?datasetId= returns source:historical_dataset + >= 50 candles', async () => {
+    const { body } = await GET(`/api/chart/candles/SPY?datasetId=${SPY_ID}`);
+    assert.equal(body.success, true,               'Expected success:true');
+    assert.equal(body.source,  'historical_dataset', 'Expected source:historical_dataset');
+    assert.ok(Array.isArray(body.candles),          'candles must be Array');
+    assert.ok(
+      body.candles.length >= 50,
+      `Expected >= 50 candles from fixture, got ${body.candles.length}`,
+    );
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
+    markCovered(R.GET_CHART_CANDLES, `source:historical_dataset candles.length=${body.candles.length}`);
   });
 
-  it('GET /api/chart/indicators/:symbol returns success:true', async () => {
-    const { body } = await GET('/api/chart/indicators/SPY');
-    assert.equal(body.success, true, 'Expected success:true');
-    assert.ok(!hasNonFinite(body),   'No NaN/Infinity');
-    markCovered(R.GET_CHART_INDICATORS, 'success:true');
+  it('GET /api/chart/indicators/SPY?datasetId= returns source:historical_dataset + indicators', async () => {
+    const { body } = await GET(`/api/chart/indicators/SPY?datasetId=${SPY_ID}`);
+    assert.equal(body.success, true,               'Expected success:true');
+    assert.equal(body.source,  'historical_dataset', 'Expected source:historical_dataset');
+    assert.ok(Array.isArray(body.indicators),      'indicators must be Array');
+    assert.ok(body.indicators.length > 0,          'indicators must be non-empty with fixture data');
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
+    markCovered(R.GET_CHART_INDICATORS, `source:historical_dataset indicators.length=${body.indicators?.length}`);
   });
 
-  it('GET /api/chart/payload/:symbol returns success:true + candles Array', async () => {
-    const { body } = await GET('/api/chart/payload/SPY');
-    assert.equal(body.success, true,      'Expected success:true');
-    assert.ok(Array.isArray(body.candles), 'candles must be Array');
-    assert.ok(!hasNonFinite(body),         'No NaN/Infinity');
-    markCovered(R.GET_CHART_PAYLOAD, 'success:true candles:Array');
+  it('GET /api/chart/payload/SPY?datasetId= returns source:historical_dataset + >= 50 candles', async () => {
+    const { body } = await GET(`/api/chart/payload/SPY?datasetId=${SPY_ID}`);
+    assert.equal(body.success, true,               'Expected success:true');
+    assert.equal(body.source,  'historical_dataset', 'Expected source:historical_dataset');
+    assert.ok(Array.isArray(body.candles),          'candles must be Array');
+    assert.ok(
+      body.candles.length >= 50,
+      `Expected >= 50 candles from fixture, got ${body.candles.length}`,
+    );
+    assert.ok(!hasNonFinite(body), 'No NaN/Infinity');
+    markCovered(R.GET_CHART_PAYLOAD, `source:historical_dataset candles.length=${body.candles.length}`);
   });
 });
 
@@ -1111,6 +1124,28 @@ describe('Poison tests — suite proves it bites', () => {
       body.observations >= 20,
       `observations must be >= 20 with fixture data; got ${body.observations}. ` +
       'If this fails, the fixture data or the correlation logic is broken.',
+    );
+  });
+
+  it('Chart candles with bad datasetId returns empty candles array (not fallback_demo)', async () => {
+    const { body } = await GET('/api/chart/candles/SPY?datasetId=__poison_does_not_exist__');
+    assert.equal(body.success, true,              'success is true (graceful degradation)');
+    assert.equal(body.source, 'dataset_error',   'source must be dataset_error — not fallback_demo');
+    assert.ok(
+      Array.isArray(body.candles) && body.candles.length === 0,
+      'Bad datasetId must yield 0 candles, not synthetic fallback data',
+    );
+  });
+
+  it('Chart candles WITH valid fixture datasetId returns historical_dataset source (not fallback_demo)', async () => {
+    // Proves that the datasetId path is actually wired: if getCandles() ignores datasetId
+    // the source would be fallback_demo and this assertion fails.
+    const { body } = await GET(`/api/chart/candles/SPY?datasetId=${SPY_ID}`);
+    assert.equal(body.success, true,                'success:true');
+    assert.equal(body.source, 'historical_dataset', 'Must use historical_dataset, not fallback_demo');
+    assert.ok(
+      body.candles.length >= 50,
+      `Must return >= 50 real candles from fixture; got ${body.candles.length}`,
     );
   });
 });

@@ -8,11 +8,12 @@ const chartRoutes = Router();
 // ── Candles ──────────────────────────────────────────────────────────────────
 
 chartRoutes.get('/candles/:symbol', async (req, res) => {
-  const timeframe = req.query?.timeframe || '1m';
-  const limit     = Number(req.query?.limit || 200);
+  const timeframe  = req.query?.timeframe || '1m';
+  const limit      = Number(req.query?.limit || 200);
+  const datasetId  = req.query?.datasetId || null;
   return res.json({
     success: true,
-    ...await chartDataEngine.getCandles(req.params.symbol, timeframe, limit),
+    ...await chartDataEngine.getCandles(req.params.symbol, timeframe, limit, datasetId),
   });
 });
 
@@ -20,12 +21,13 @@ chartRoutes.get('/candles/:symbol', async (req, res) => {
 
 chartRoutes.get('/indicators/:symbol', async (req, res) => {
   const timeframe  = req.query?.timeframe || '1m';
+  const datasetId  = req.query?.datasetId || null;
   const indicators = String(
     req.query?.indicators || 'vwap,ema9,ema20,rsi14,volume_avg,volume_zscore',
   ).split(',');
   return res.json({
     success: true,
-    ...await chartDataEngine.getIndicators(req.params.symbol, timeframe, indicators),
+    ...await chartDataEngine.getIndicators(req.params.symbol, timeframe, indicators, null, datasetId),
   });
 });
 
@@ -53,7 +55,8 @@ chartRoutes.get('/orderflow/:symbol', (req, res) => {
 chartRoutes.get('/payload/:symbol', async (req, res) => {
   const timeframe = req.query?.timeframe || '1m';
   const limit     = Number(req.query?.limit || 200);
-  const payload   = await chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit);
+  const datasetId = req.query?.datasetId || null;
+  const payload   = await chartDataEngine.buildChartPayload(req.params.symbol, timeframe, limit, datasetId);
 
   const indicatorsObj = {};
   if (Array.isArray(payload.indicators)) {
@@ -80,8 +83,9 @@ chartRoutes.get('/cvd/:symbol', async (req, res) => {
 
     const timeframe = String(req.query.timeframe || '1m');
     const limit     = Math.min(500, Math.max(10, parseInt(req.query.limit, 10) || 200));
+    const datasetId = req.query.datasetId || null;
 
-    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit);
+    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit, datasetId);
     const candles       = candlePayload.candles || [];
 
     const cvdPayload = cvdEngine.buildCVDPayload(symbol, candles, candlePayload.source);
@@ -126,8 +130,9 @@ chartRoutes.get('/footprint/:symbol', async (req, res) => {
     const limit              = Math.min(200, Math.max(5, parseInt(req.query.limit, 10) || 50));
     const clusterSize        = req.query.clusterSize ? parseFloat(req.query.clusterSize) : null;
     const imbalanceThreshold = Math.max(1.1, parseFloat(req.query.imbalanceThreshold) || 3.0);
+    const datasetId          = req.query.datasetId || null;
 
-    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit);
+    const candlePayload = await chartDataEngine.getCandles(symbol, timeframe, limit, datasetId);
     const candles       = candlePayload.candles || [];
 
     // Cache for WebSocket push
