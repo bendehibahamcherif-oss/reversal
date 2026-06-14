@@ -88,7 +88,7 @@ const SERVER_JS  = join(REPO_ROOT, 'server.js');
  * @param {{ seedDir: string, jwtSecret: string, port?: number }} opts
  * @returns {Promise<{ port: number, baseUrl: string, child: ChildProcess, jwtSecret: string }>}
  */
-export async function spawnTestServer({ seedDir, jwtSecret, port: preferredPort } = {}) {
+export async function spawnTestServer({ seedDir, jwtSecret, port: preferredPort, extraEnv } = {}) {
   const port    = preferredPort ?? await findFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -103,8 +103,13 @@ export async function spawnTestServer({ seedDir, jwtSecret, port: preferredPort 
     JWT_SECRET:           jwtSecret || 'functional-test-secret-change-in-ci',
     // Silence MongoDB connection attempts in test
     MONGO_URI:            '',
+    // Relax rate limits so test suites with many requests don't self-429
+    RATE_LIMIT_MAX:        String(process.env.RATE_LIMIT_MAX        || '2000'),
+    RATE_LIMIT_STRICT_MAX: String(process.env.RATE_LIMIT_STRICT_MAX || '500'),
     // Point the registry at the seed directory
     ...(histDir ? { HISTORICAL_DATA_DIR: histDir } : {}),
+    // Caller-supplied overrides (applied last so they win)
+    ...(extraEnv || {}),
   };
 
   const child = cp.spawn(process.execPath, [SERVER_JS], {
