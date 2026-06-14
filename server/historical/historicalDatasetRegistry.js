@@ -1,10 +1,18 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID, createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, '../data/historical');
+
+// Support HISTORICAL_DATA_DIR env var: absolute paths are used as-is;
+// relative paths are resolved against process.cwd() at startup.
+// Falls back to the legacy sibling directory when the env var is not set.
+const DATA_DIR = process.env.HISTORICAL_DATA_DIR
+  ? (isAbsolute(process.env.HISTORICAL_DATA_DIR)
+      ? process.env.HISTORICAL_DATA_DIR
+      : resolve(process.cwd(), process.env.HISTORICAL_DATA_DIR))
+  : join(__dirname, '../data/historical');
 const REGISTRY_FILE = join(DATA_DIR, 'datasets.json');
 const RAW_DIR = join(DATA_DIR, 'raw');
 const ML_DIR = join(DATA_DIR, 'ml');

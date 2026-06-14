@@ -1,0 +1,112 @@
+name: Production Smoke
+
+on:
+  schedule:
+    # Weekdays at 2pm UTC
+    - cron: '0 14 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  prod-smoke:
+    name: Production smoke checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run production smoke checks
+        run: |
+          node --input-type=module << 'EOF'
+          const TARGET = 'https://reversal.onrender.com';
+
+          // Known stable dataset IDs on production (updated when re-seeded)
+          const SPY_ID  = 'hist_SPY_1d_RTH_20250501_20260613_yahoo';
+          const NFLX_ID = 'hist_NFLX_1d_RTH_20250501_20260613_yahoo';
+
+          const checks = [
+            {
+              label: 'GET /health → ok:true',
+              url: `${TARGET}/health`,
+              assert: (body, status) => {
+                if (status !== 200) throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true) throw new Error(`Expected ok:true, got ${JSON.stringify(body)}`);
+              },
+            },
+            {
+              label: 'GET /api/version → ok:true',
+              url: `${TARGET}/api/version`,
+              assert: (body, status) => {
+                if (status !== 200) throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true) throw new Error(`Expected ok:true, got ${JSON.stringify(body)}`);
+              },
+            },
+            {
+              label: 'GET /api/historical/status → ok:true',
+              url: `${TARGET}/api/historical/status`,
+              assert: (body, status) => {
+                if (status !== 200) throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true) throw new Error(`Expected ok:true, got ${JSON.stringify(body)}`);
+              },
+            },
+            {
+              label: 'GET /api/macro/correlation (SPY+NFLX) → ok:true, observations >= 20',
+              url: `${TARGET}/api/macro/correlation?datasetIds=${SPY_ID},${NFLX_ID}&symbols=SPY,NFLX`,
+              assert: (body, status) => {
+                if (status !== 200) throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true)        throw new Error(`Expected ok:true. Got: ${JSON.stringify(body).slice(0, 300)}`);
+                if (!(body.observations >= 20)) throw new Error(`Expected observations >= 20, got ${body.observations}`);
+              },
+            },
+            {
+              label: 'GET /api/macro/beta (NFLX/SPY) → ok:true, finite beta',
+              url: `${TARGET}/api/macro/beta?datasetIds=${SPY_ID},${NFLX_ID}&asset=NFLX&benchmark=SPY`,
+              assert: (body, status) => {
+                if (status !== 200)              throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true)            throw new Error(`Expected ok:true. Got: ${JSON.stringify(body).slice(0, 300)}`);
+                if (!Number.isFinite(body.beta)) throw new Error(`Expected finite beta, got ${body.beta}`);
+              },
+            },
+            {
+              label: 'GET /api/observability/health → ok:true',
+              url: `${TARGET}/api/observability/health`,
+              assert: (body, status) => {
+                if (status !== 200) throw new Error(`Expected 200, got ${status}`);
+                if (body.ok !== true) throw new Error(`Expected ok:true, got ${JSON.stringify(body)}`);
+              },
+            },
+          ];
+
+          let passed = 0;
+          let failed = 0;
+
+          for (const check of checks) {
+            try {
+              const res  = await fetch(check.url, { signal: AbortSignal.timeout(15_000) });
+              const text = await res.text();
+              let body;
+              try { body = JSON.parse(text); } catch { body = { _raw: text }; }
+              check.assert(body, res.status);
+              console.log(`  PASS  ${check.label}`);
+              passed++;
+            } catch (err) {
+              console.error(`  FAIL  ${check.label}`);
+              console.error(`        ${err.message}`);
+              failed++;
+            }
+          }
+
+          console.log('');
+          console.log(`Results: ${passed} passed, ${failed} failed out of ${checks.length} checks`);
+
+          if (failed > 0) {
+            console.error('Production smoke FAILED.');
+            process.exit(1);
+          }
+          console.log('Production smoke PASSED.');
+          EOF
