@@ -1,0 +1,115 @@
+name: Backend Functional Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  seed:
+    name: Seed test data
+    runs-on: ubuntu-latest
+    outputs:
+      seed-cache-hit: ${{ steps.cache-seed.outputs.cache-hit }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache seed data
+        id: cache-seed
+        uses: actions/cache@v4
+        with:
+          path: ./test-seed
+          key: seed-data-v1-${{ hashFiles('scripts/seed-test-data.js') }}
+          restore-keys: |
+            seed-data-v1-
+
+      - name: Seed test data (skip if cached)
+        run: npm run seed:test
+
+  functional-coverage:
+    name: Functional coverage tests
+    runs-on: ubuntu-latest
+    needs: seed
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore seed data cache
+        uses: actions/cache@v4
+        with:
+          path: ./test-seed
+          key: seed-data-v1-${{ hashFiles('scripts/seed-test-data.js') }}
+          restore-keys: |
+            seed-data-v1-
+
+      - name: Ensure seed data present
+        run: npm run seed:test
+
+      - name: Run functional coverage tests
+        run: npm run test:functional
+        env:
+          SEED_DIR: ./test-seed
+          NODE_ENV: test
+
+      - name: Upload BACKEND_COVERAGE.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: BACKEND_COVERAGE.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  coverage-barrier:
+    name: Coverage barrier
+    runs-on: ubuntu-latest
+    needs: functional-coverage
+
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage
+
+      - name: Enforce coverage barrier
+        run: |
+          node -e "
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('BACKEND_COVERAGE.json', 'utf8'));
+            const routes = c.routes || {};
+            const bad = Object.entries(routes).filter(
+              ([, v]) => !v.status.startsWith('covered') && !v.status.startsWith('deferred:')
+            );
+            if (bad.length) {
+              console.error('COVERAGE BARRIER FAILED — uncovered routes:');
+              bad.forEach(([k]) => console.error('  ' + k));
+              process.exit(1);
+            }
+            const cov = Object.values(routes).filter(v => v.status.startsWith('covered')).length;
+            const def = Object.values(routes).filter(v => v.status.startsWith('deferred:')).length;
+            const tot = Object.keys(routes).length;
+            console.log('Coverage barrier passed: ' + cov + ' covered, ' + def + ' deferred, ' + tot + ' total');
+          "

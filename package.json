@@ -11,7 +11,11 @@
     "test:ml": "node scripts/test-ml-inference.cjs",
     "check:server": "node --check server/index.cjs",
     "test": "node --test --test-concurrency=1 server/tests/*.test.js",
-    "build": "node --check server/index.cjs && node --check server.js"
+    "build": "node --check server/index.cjs && node --check server.js",
+    "seed:test": "HISTORICAL_DATA_DIR=./test-seed node scripts/seed-test-data.js",
+    "seed:test:force": "HISTORICAL_DATA_DIR=./test-seed node scripts/seed-test-data.js --force",
+    "test:functional": "SEED_DIR=./test-seed node --test --test-concurrency=1 server/tests/functional/backend-coverage.test.js",
+    "serve:test": "HISTORICAL_DATA_DIR=./test-seed node server/tests/functional/serve-test.js"
   },
   "engines": {
     "node": "20.x"
